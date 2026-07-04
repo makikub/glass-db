@@ -91,17 +91,25 @@ struct DatabaseView: View {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 220, ideal: 280)
         } detail: {
-            ZStack(alignment: .bottom) {
-                switch model.workspaceMode {
-                case .table:
-                    VStack(spacing: 0) {
-                        TableControlsView()
-                        DataGridView()
+            VStack(spacing: 0) {
+                WorkspaceHeaderView()
+
+                ZStack(alignment: .bottom) {
+                    switch model.workspaceMode {
+                    case .table:
+                        VStack(spacing: 0) {
+                            if model.selectedTable != nil {
+                                TableControlsView()
+                            }
+                            DataGridView()
+                        }
+                        if model.selectedTable != nil, !model.resultSet.columns.isEmpty {
+                            PagerBar()
+                                .padding(.bottom, 16)
+                        }
+                    case .sql:
+                        SQLWorkspaceView()
                     }
-                    PagerBar()
-                        .padding(.bottom, 16)
-                case .sql:
-                    SQLWorkspaceView()
                 }
             }
         }
@@ -165,28 +173,131 @@ struct SidebarView: View {
                 .textFieldStyle(.roundedBorder)
                 .padding([.horizontal, .bottom])
 
-            List(model.filteredTables, selection: $model.selectedTable) { table in
-                Button {
-                    Task { await model.select(table) }
-                } label: {
-                    Label(table.name, systemImage: table.kind == .view ? "eye" : "tablecells")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .buttonStyle(.plain)
-                .contextMenu {
-                    Button("Open Data") {
-                        Task { await model.select(table) }
-                    }
-                    Button("Count Rows") {
-                        Task { await model.countRows(table) }
-                    }
-                    Button("Copy Name") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(table.name, forType: .string)
-                    }
-                }
+            List(model.filteredTables) { table in
+                SidebarTableRow(table: table)
             }
         }
+    }
+}
+
+struct SidebarTableRow: View {
+    @Environment(AppModel.self) private var model
+    let table: TableInfo
+
+    private var isSelected: Bool {
+        model.selectedTable == table
+    }
+
+    var body: some View {
+        Button {
+            Task { await model.select(table) }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: table.kind == .view ? "eye" : "tablecells")
+                    .foregroundStyle(isSelected ? .white : .secondary)
+                Text(table.name)
+                    .lineLimit(1)
+                Spacer()
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.caption.weight(.bold))
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .foregroundStyle(isSelected ? .white : .primary)
+            .background(isSelected ? Color.accentColor : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("Open Data") {
+                Task { await model.select(table) }
+            }
+            Button("Count Rows") {
+                Task { await model.countRows(table) }
+            }
+            Button("Copy Name") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(table.name, forType: .string)
+            }
+        }
+    }
+}
+
+struct WorkspaceHeaderView: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        HStack(spacing: 12) {
+            HStack(spacing: 4) {
+                WorkspaceModeButton(
+                    title: "Data",
+                    systemImage: "tablecells",
+                    isSelected: model.workspaceMode == .table,
+                    isDisabled: model.selectedTable == nil
+                ) {
+                    Task { await model.showTableWorkspace() }
+                }
+
+                WorkspaceModeButton(
+                    title: "SQL",
+                    systemImage: "terminal",
+                    isSelected: model.workspaceMode == .sql,
+                    isDisabled: false
+                ) {
+                    model.showSQLWorkspace()
+                }
+            }
+            .padding(3)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+
+            if model.workspaceMode == .table {
+                if let table = model.selectedTable {
+                    Label(table.name, systemImage: table.kind == .view ? "eye" : "tablecells")
+                        .font(.headline)
+                        .lineLimit(1)
+                    if let totalRows = model.totalRows {
+                        Text("\(totalRows) rows")
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text("Choose a table from the sidebar")
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Text("Run SQL against \(model.connectionName)")
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.bar)
+    }
+}
+
+struct WorkspaceModeButton: View {
+    let title: String
+    let systemImage: String
+    let isSelected: Bool
+    let isDisabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.callout.weight(.medium))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .frame(minWidth: 92)
+                .foregroundStyle(isSelected ? .primary : .secondary)
+                .background(isSelected ? Color(nsColor: .controlBackgroundColor) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
     }
 }
 
