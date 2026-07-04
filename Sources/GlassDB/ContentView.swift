@@ -239,27 +239,14 @@ struct WorkspaceHeaderView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            HStack(spacing: 4) {
-                WorkspaceModeButton(
-                    title: "Data",
-                    systemImage: "tablecells",
-                    isSelected: model.workspaceMode == .table,
-                    isDisabled: model.selectedTable == nil
-                ) {
-                    Task { await model.showTableWorkspace() }
-                }
-
-                WorkspaceModeButton(
-                    title: "SQL",
-                    systemImage: "terminal",
-                    isSelected: model.workspaceMode == .sql,
-                    isDisabled: false
-                ) {
-                    model.showSQLWorkspace()
-                }
+            Picker("Workspace", selection: workspaceSelection) {
+                Label("Data", systemImage: "tablecells").tag(WorkspaceMode.table)
+                Label("SQL", systemImage: "terminal").tag(WorkspaceMode.sql)
             }
-            .padding(3)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .frame(width: 220)
+            .controlSize(.large)
 
             if model.workspaceMode == .table {
                 if let table = model.selectedTable {
@@ -285,27 +272,19 @@ struct WorkspaceHeaderView: View {
         .padding(.vertical, 10)
         .background(.bar)
     }
-}
 
-struct WorkspaceModeButton: View {
-    let title: String
-    let systemImage: String
-    let isSelected: Bool
-    let isDisabled: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .font(.callout.weight(.medium))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .frame(minWidth: 92)
-                .foregroundStyle(isSelected ? .primary : .secondary)
-                .background(isSelected ? Color(nsColor: .controlBackgroundColor) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+    private var workspaceSelection: Binding<WorkspaceMode> {
+        Binding {
+            model.workspaceMode
+        } set: { mode in
+            switch mode {
+            case .table:
+                guard model.selectedTable != nil else { return }
+                Task { await model.showTableWorkspace() }
+            case .sql:
+                model.showSQLWorkspace()
+            }
         }
-        .buttonStyle(.plain)
-        .disabled(isDisabled)
     }
 }
 
@@ -379,6 +358,7 @@ struct TableControlsView: View {
                     }
                 }
                 .frame(width: 160)
+                .controlSize(.large)
 
                 Picker("Operator", selection: $model.filterOperator) {
                     ForEach(FilterOperator.allCases) { op in
@@ -386,10 +366,12 @@ struct TableControlsView: View {
                     }
                 }
                 .frame(width: 112)
+                .controlSize(.large)
 
                 TextField("Filter value", text: $model.filterValue)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 220)
+                    .controlSize(.large)
                     .disabled(!model.filterOperator.needsValue)
 
                 Button {
@@ -397,12 +379,14 @@ struct TableControlsView: View {
                 } label: {
                     Label("Apply Filter", systemImage: "line.3.horizontal.decrease.circle")
                 }
+                .controlSize(.large)
 
                 Button {
                     Task { await model.clearFilter() }
                 } label: {
                     Label("Clear", systemImage: "xmark.circle")
                 }
+                .controlSize(.large)
 
                 Divider()
                     .frame(height: 20)
@@ -412,6 +396,7 @@ struct TableControlsView: View {
                 } label: {
                     Label(model.totalRows.map { "\($0) rows" } ?? "Count Rows", systemImage: "number")
                 }
+                .controlSize(.large)
                 .disabled(model.selectedTable == nil)
 
                 Spacer(minLength: 0)
