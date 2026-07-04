@@ -89,7 +89,7 @@ struct DatabaseView: View {
 
         NavigationSplitView {
             SidebarView()
-                .navigationSplitViewColumnWidth(min: 220, ideal: 280)
+                .navigationSplitViewColumnWidth(min: 260, ideal: 300, max: 380)
         } detail: {
             VStack(spacing: 0) {
                 WorkspaceHeaderView()
@@ -111,6 +111,7 @@ struct DatabaseView: View {
                         SQLWorkspaceView()
                     }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
         .inspector(isPresented: .constant(true)) {
@@ -161,21 +162,27 @@ struct SidebarView: View {
                 Text(model.connectionName)
                     .font(.headline)
                     .lineLimit(1)
+                    .truncationMode(.middle)
                 Text(model.databasePath)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .truncationMode(.middle)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding()
+            .padding(.horizontal, 18)
+            .padding(.top, 16)
+            .padding(.bottom, 12)
 
             TextField("Filter tables", text: $model.filterText)
                 .textFieldStyle(.roundedBorder)
-                .padding([.horizontal, .bottom])
+                .padding(.horizontal, 18)
+                .padding(.bottom, 12)
 
             List(model.filteredTables) { table in
                 SidebarTableRow(table: table)
             }
+            .listStyle(.sidebar)
         }
     }
 }
@@ -211,6 +218,7 @@ struct SidebarTableRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
         .contextMenu {
             Button("Open Data") {
                 Task { await model.select(table) }
@@ -311,40 +319,47 @@ struct DataGridView: View {
             ContentUnavailableView("No columns", systemImage: "rectangle.split.3x1")
         } else {
             ScrollView([.horizontal, .vertical]) {
-                Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
-                    GridRow {
-                        ForEach(model.resultSet.columns) { column in
-                            HeaderCell(
-                                title: column.name,
-                                sortState: model.sortState,
-                                isSortable: model.isTableMode
-                            ) {
-                                Task { await model.toggleSort(column: column.name) }
-                            }
-                        }
-                    }
-
-                    ForEach(model.resultSet.rows) { row in
+                VStack(alignment: .leading, spacing: 0) {
+                    Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
                         GridRow {
                             ForEach(model.resultSet.columns) { column in
-                                let value = row.values[column.name] ?? .null
-                                ValueCell(value: value) {
-                                    model.selectedCell = CellSelection(column: column.name, value: value)
-                                } copyAction: {
-                                    model.copyCell(value)
+                                HeaderCell(
+                                    title: column.name,
+                                    sortState: model.sortState,
+                                    isSortable: model.isTableMode
+                                ) {
+                                    Task { await model.toggleSort(column: column.name) }
                                 }
                             }
                         }
-                        .contextMenu {
-                            Button("Copy Row") {
-                                model.copyRow(row)
+
+                        ForEach(model.resultSet.rows) { row in
+                            GridRow {
+                                ForEach(model.resultSet.columns) { column in
+                                    let value = row.values[column.name] ?? .null
+                                    ValueCell(value: value) {
+                                        model.selectedCell = CellSelection(column: column.name, value: value)
+                                    } copyAction: {
+                                        model.copyCell(value)
+                                    }
+                                }
+                            }
+                            .contextMenu {
+                                Button("Copy Row") {
+                                    model.copyRow(row)
+                                }
                             }
                         }
                     }
+                    Spacer(minLength: 0)
                 }
-                .padding(24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
                 .padding(.bottom, 64)
             }
+            .defaultScrollAnchor(.topLeading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(Color(nsColor: .textBackgroundColor))
         }
     }
@@ -356,52 +371,56 @@ struct TableControlsView: View {
     var body: some View {
         @Bindable var model = model
 
-        HStack(spacing: 10) {
-            Picker("Column", selection: $model.filterColumn) {
-                ForEach(model.tableColumns) { column in
-                    Text(column.name).tag(column.name)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                Picker("Column", selection: $model.filterColumn) {
+                    ForEach(model.tableColumns) { column in
+                        Text(column.name).tag(column.name)
+                    }
                 }
-            }
-            .frame(width: 180)
+                .frame(width: 160)
 
-            Picker("Operator", selection: $model.filterOperator) {
-                ForEach(FilterOperator.allCases) { op in
-                    Text(op.rawValue).tag(op)
+                Picker("Operator", selection: $model.filterOperator) {
+                    ForEach(FilterOperator.allCases) { op in
+                        Text(op.rawValue).tag(op)
+                    }
                 }
+                .frame(width: 112)
+
+                TextField("Filter value", text: $model.filterValue)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 220)
+                    .disabled(!model.filterOperator.needsValue)
+
+                Button {
+                    Task { await model.applyFilter() }
+                } label: {
+                    Label("Apply Filter", systemImage: "line.3.horizontal.decrease.circle")
+                }
+
+                Button {
+                    Task { await model.clearFilter() }
+                } label: {
+                    Label("Clear", systemImage: "xmark.circle")
+                }
+
+                Divider()
+                    .frame(height: 20)
+
+                Button {
+                    Task { await model.countRows() }
+                } label: {
+                    Label(model.totalRows.map { "\($0) rows" } ?? "Count Rows", systemImage: "number")
+                }
+                .disabled(model.selectedTable == nil)
+
+                Spacer(minLength: 0)
             }
-            .frame(width: 120)
-
-            TextField("Filter value", text: $model.filterValue)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 220)
-                .disabled(!model.filterOperator.needsValue)
-
-            Button {
-                Task { await model.applyFilter() }
-            } label: {
-                Label("Apply Filter", systemImage: "line.3.horizontal.decrease.circle")
-            }
-
-            Button {
-                Task { await model.clearFilter() }
-            } label: {
-                Label("Clear", systemImage: "xmark.circle")
-            }
-
-            Divider()
-                .frame(height: 20)
-
-            Button {
-                Task { await model.countRows() }
-            } label: {
-                Label(model.totalRows.map { "\($0) rows" } ?? "Count Rows", systemImage: "number")
-            }
-            .disabled(model.selectedTable == nil)
-
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(.regularMaterial)
     }
 }
@@ -424,7 +443,7 @@ struct HeaderCell: View {
             }
             .font(.caption.weight(.semibold))
             .foregroundStyle(.secondary)
-            .frame(width: 160, alignment: .leading)
+            .frame(width: 128, alignment: .leading)
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .background(Color(nsColor: .controlBackgroundColor))
@@ -457,7 +476,7 @@ struct ValueCell: View {
                 }
             }
             .font(.system(.body, design: .monospaced))
-            .frame(width: 160, height: 34, alignment: .leading)
+            .frame(width: 128, height: 34, alignment: .leading)
             .padding(.horizontal, 10)
             .background(Color(nsColor: .textBackgroundColor))
             .border(Color(nsColor: .separatorColor), width: 0.5)
@@ -481,6 +500,7 @@ struct SQLWorkspaceView: View {
             VStack(spacing: 10) {
                 TextEditor(text: $model.sqlText)
                     .font(.system(.body, design: .monospaced))
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .frame(minHeight: 140, maxHeight: 220)
                     .scrollContentBackground(.hidden)
                     .padding(8)
@@ -524,7 +544,9 @@ struct SQLWorkspaceView: View {
             .background(.regularMaterial)
 
             SQLResultGridView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
@@ -536,33 +558,40 @@ struct SQLResultGridView: View {
             ContentUnavailableView("Run SQL", systemImage: "terminal", description: Text("SELECT results appear here."))
         } else {
             ScrollView([.horizontal, .vertical]) {
-                Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
-                    GridRow {
-                        ForEach(model.resultSet.columns) { column in
-                            HeaderCell(title: column.name, sortState: nil, isSortable: false) {}
-                        }
-                    }
-
-                    ForEach(model.resultSet.rows) { row in
+                VStack(alignment: .leading, spacing: 0) {
+                    Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
                         GridRow {
                             ForEach(model.resultSet.columns) { column in
-                                let value = row.values[column.name] ?? .null
-                                ValueCell(value: value) {
-                                    model.selectedCell = CellSelection(column: column.name, value: value)
-                                } copyAction: {
-                                    model.copyCell(value)
+                                HeaderCell(title: column.name, sortState: nil, isSortable: false) {}
+                            }
+                        }
+
+                        ForEach(model.resultSet.rows) { row in
+                            GridRow {
+                                ForEach(model.resultSet.columns) { column in
+                                    let value = row.values[column.name] ?? .null
+                                    ValueCell(value: value) {
+                                        model.selectedCell = CellSelection(column: column.name, value: value)
+                                    } copyAction: {
+                                        model.copyCell(value)
+                                    }
+                                }
+                            }
+                            .contextMenu {
+                                Button("Copy Row") {
+                                    model.copyRow(row)
                                 }
                             }
                         }
-                        .contextMenu {
-                            Button("Copy Row") {
-                                model.copyRow(row)
-                            }
-                        }
                     }
+                    Spacer(minLength: 0)
                 }
-                .padding(24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
             }
+            .defaultScrollAnchor(.topLeading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(Color(nsColor: .textBackgroundColor))
         }
     }
