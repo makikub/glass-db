@@ -34,4 +34,6 @@
 
 - Commit messages must include what changed and why.
 - Keep generated build artifacts out of commits.
-- Tracked hook assets should live in `.githooks` after explicit approval.
+- Tracked hook assets live in `.githooks`.
+- The HIG pre-commit hook may send staged diffs to `codex exec` for external review. Use it only where that export is acceptable.
+- Enable hooks with `git config core.hooksPath .githooks`.

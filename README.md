@@ -27,6 +27,12 @@ open build/GlassDB.app
 
 - `AGENTS.md` contains durable instructions for Codex and other agents.
 - `.agents/skills/apple-hig-review` contains the repo-scoped HIG review skill.
-- Before committing UI changes, use `$apple-hig-review` or an approved HIG review hook.
+- `.githooks/pre-commit` runs the HIG review hook for staged SwiftUI and guidance changes.
 
-The planned pre-commit hook can invoke `codex exec` against staged diffs. Because that can send repository code to the external Codex service, enable it only after explicit approval.
+Enable hooks locally:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+The HIG hook invokes `codex exec` against staged diffs, which can send repository code to the external Codex service. Set `GLASSDB_SKIP_HIG_REVIEW=1` to skip the hook for an emergency local commit. Set `GLASSDB_HIG_REVIEW_REQUIRED=1` to fail closed when `codex exec` is unavailable.
