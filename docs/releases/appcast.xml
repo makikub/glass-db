@@ -3,13 +3,13 @@
     <channel>
         <title>GlassDB</title>
         <item>
-            <title>0.1.0</title>
-            <pubDate>Mon, 06 Jul 2026 01:08:40 +0900</pubDate>
-            <sparkle:version>1</sparkle:version>
-            <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
+            <title>0.1.1</title>
+            <pubDate>Mon, 06 Jul 2026 01:38:22 +0900</pubDate>
+            <sparkle:version>2</sparkle:version>
+            <sparkle:shortVersionString>0.1.1</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://makikub.github.io/glass-db/releases/GlassDB-0.1.0.zip" length="4318893" type="application/octet-stream" sparkle:edSignature="njmPtdRrCQZVK5q6qWzh3optudeKWi8fwV0uKVEjwy/lPTwp1aFW9pWn/ZRKeRX36fln2qTN9ZrdSIHSfBWJBA=="/>
+            <enclosure url="https://makikub.github.io/glass-db/releases/GlassDB-0.1.1.zip" length="4255336" type="application/octet-stream" sparkle:edSignature="yp8XnmWevR21RxOJLRUmJKt5tKxflAyFIn8w4E4weGrSwieGXUK47aMCD/kDkF368sSm/yqBKLVu27QUHZQ0BQ=="/>
         </item>
     </channel>
 </rss>

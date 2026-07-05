@@ -129,14 +129,14 @@ codesign "${codesign_args[@]}" --identifier "$bundle_id" "$app_dir"
 if [[ -n "$notary_profile" ]]; then
   notary_zip="$repo_root/build/release/GlassDB-notary-${version}.zip"
   rm -f "$notary_zip"
-  ditto -c -k --keepParent "$app_dir" "$notary_zip"
+  COPYFILE_DISABLE=1 ditto -c -k --keepParent --norsrc --noextattr --noqtn --noacl "$app_dir" "$notary_zip"
   xcrun notarytool submit "$notary_zip" --keychain-profile "$notary_profile" --wait
   xcrun stapler staple "$app_dir"
   codesign --verify --deep --strict "$app_dir"
 fi
 
 rm -f "$zip_path"
-ditto -c -k --keepParent "$app_dir" "$zip_path"
+COPYFILE_DISABLE=1 ditto -c -k --keepParent --norsrc --noextattr --noqtn --noacl "$app_dir" "$zip_path"
 
 echo "Created $app_dir"
 echo "Created $zip_path"

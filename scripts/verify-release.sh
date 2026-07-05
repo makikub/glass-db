@@ -32,6 +32,10 @@ fail() {
 [[ -f "$release_zip" ]] || fail "missing $release_zip"
 [[ -f "$appcast" ]] || fail "missing $appcast"
 
+if unzip -l "$release_zip" | grep -Eq '(^|/)(__MACOSX|\\._|\\.DS_Store)'; then
+  fail "archive contains AppleDouble or Finder metadata files"
+fi
+
 ditto -x -k "$release_zip" "$work_dir"
 app="$work_dir/GlassDB.app"
 info="$app/Contents/Info.plist"
@@ -41,6 +45,9 @@ info="$app/Contents/Info.plist"
 [[ -f "$app/Contents/MacOS/GlassDB" ]] || fail "archive is missing executable"
 [[ -d "$app/Contents/Frameworks/Sparkle.framework" ]] || fail "archive is missing Sparkle.framework"
 [[ -f "$app/Contents/Resources/GlassDB.icns" || -f "$app/Contents/Resources/Assets.car" ]] || fail "archive is missing app icon resources"
+if find "$app" \( -name '._*' -o -name '__MACOSX' -o -name '.DS_Store' \) -print -quit | grep -q .; then
+  fail "extracted app contains AppleDouble or Finder metadata files"
+fi
 
 short_version="$(plutil -extract CFBundleShortVersionString raw "$info")"
 actual_build="$(plutil -extract CFBundleVersion raw "$info")"
