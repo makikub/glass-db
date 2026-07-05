@@ -19,8 +19,25 @@ case "$changed_files" in
     ;;
 esac
 
-if ! command -v codex >/dev/null 2>&1; then
-  echo "GlassDB HIG review skipped: codex CLI not found." >&2
+codex_candidates=()
+if [ -n "${GLASSDB_HIG_REVIEW_CODEX:-}" ]; then
+  codex_candidates+=("$GLASSDB_HIG_REVIEW_CODEX")
+fi
+if command -v codex >/dev/null 2>&1; then
+  codex_candidates+=("$(command -v codex)")
+fi
+codex_candidates+=("/Applications/Codex.app/Contents/Resources/codex")
+
+codex_cli=""
+for candidate in "${codex_candidates[@]}"; do
+  if [ -x "$candidate" ] && "$candidate" exec --help >/dev/null 2>&1; then
+    codex_cli="$candidate"
+    break
+  fi
+done
+
+if [ -z "$codex_cli" ]; then
+  echo "GlassDB HIG review skipped: working codex exec CLI not found." >&2
   exit 0
 fi
 
@@ -30,7 +47,7 @@ output_file="$(mktemp "${TMPDIR:-/tmp}/glassdb-hig-review.XXXXXX")"
 error_file="$(mktemp "${TMPDIR:-/tmp}/glassdb-hig-review.err.XXXXXX")"
 
 git diff --cached -- . \
-  | codex exec --ephemeral --sandbox read-only --ask-for-approval never "$prompt" \
+  | "$codex_cli" exec --ephemeral --sandbox read-only "$prompt" \
     >"$output_file" 2>"$error_file"
 status=$?
 
