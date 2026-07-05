@@ -1,0 +1,93 @@
+name: Release GlassDB
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version, for example 0.1.0
+        required: true
+      build_number:
+        description: Build number, for example 1
+        required: true
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: release-pages
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-26
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      GLASSDB_CODESIGN_IDENTITY: ${{ secrets.DEVELOPER_ID_APPLICATION_IDENTITY }}
+      GLASSDB_NOTARY_PROFILE: glassdb-notary
+      DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64 }}
+      DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD }}
+      SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+      APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+      APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ inputs.version }}"
+          build_number="${{ inputs.build_number }}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "build_number=$build_number" >> "$GITHUB_OUTPUT"
+
+      - name: Import Developer ID certificate
+        run: scripts/import-developer-id-certificate.sh
+
+      - name: Configure notary profile
+        run: scripts/configure-notary-profile.sh
+
+      - name: Build icon
+        run: scripts/make-app-icon.sh
+
+      - name: Test
+        run: swift test
+
+      - name: Package release
+        run: scripts/package-release.sh "${{ steps.version.outputs.version }}" "${{ steps.version.outputs.build_number }}"
+
+      - name: Generate appcast
+        run: scripts/update-appcast.sh
+
+      - name: Verify release
+        run: scripts/verify-release.sh "${{ steps.version.outputs.version }}" "${{ steps.version.outputs.build_number }}"
+
+      - name: Commit release artifacts
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/releases
+          git commit -m "Release GlassDB ${{ steps.version.outputs.version }}" \
+            -m "Publish signed Sparkle appcast and downloadable app archive for GitHub Pages distribution." \
+            || exit 0
+          git push origin HEAD:main
+
+      - uses: actions/configure-pages@v6
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: docs
+          include-hidden-files: true
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

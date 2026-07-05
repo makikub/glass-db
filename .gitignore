@@ -6,3 +6,5 @@ build/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+Assets/AppIcon/GlassDB.iconset/
+Assets/AppIcon/GlassDB.icns

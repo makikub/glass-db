@@ -41,6 +41,95 @@ cp .build/arm64-apple-macosx/debug/GlassDB build/GlassDB.app/Contents/MacOS/Glas
 open build/GlassDB.app
 ```
 
+## Release
+
+GlassDB ships outside the Mac App Store. The static landing page and Sparkle
+appcast live under `docs/` and are deployed to GitHub Pages.
+
+1. Generate the Sparkle EdDSA key once with Sparkle's `generate_keys` tool and
+   keep the private key safe. The public key used by the release script is
+   stored in `release/sparkle-public-key.txt`; refresh it with
+   `.build/artifacts/sparkle/Sparkle/bin/generate_keys -p` if you rotate keys.
+2. Build the app icon after replacing or editing `Assets/AppIcon/GlassDBIcon.png`:
+
+   ```sh
+   scripts/make-app-icon.sh
+   ```
+
+3. Package the app:
+
+   ```sh
+   scripts/package-release.sh 0.1.0 1
+   ```
+
+   The default feed URL is
+   `https://makikub.github.io/glass-db/releases/appcast.xml`. Override it with
+   `SPARKLE_FEED_URL` if the Pages URL changes. The script uses ad-hoc signing
+   by default for local smoke checks. For a dummy local smoke check, set
+   `GLASSDB_ALLOW_DUMMY_PUBLIC_KEY=1`. For public distribution, pass
+   `GLASSDB_CODESIGN_IDENTITY="Developer ID Application: ..."`. If you have a
+   notarytool keychain profile, also pass `GLASSDB_NOTARY_PROFILE=<profile>` to
+   notarize and staple the app before the public zip is written.
+
+4. Generate the appcast:
+
+   ```sh
+   scripts/update-appcast.sh
+   ```
+
+   The script reads the Sparkle private key from Keychain by default. You can
+   also pass `SPARKLE_ED_KEY_FILE=/path/to/private-key` or
+   `SPARKLE_ED_PRIVATE_KEY=<private-key>` for CI-style signing. The default
+   download prefix is `https://makikub.github.io/glass-db/releases/`. Unsigned
+   appcasts fail by default; set `GLASSDB_ALLOW_UNSIGNED_APPCAST=1` only for
+   local smoke checks.
+
+5. Verify the release artifacts:
+
+   ```sh
+   scripts/verify-release.sh 0.1.0 1
+   ```
+
+   This requires a real Sparkle public key, an EdDSA-signed appcast, and a
+   non-ad-hoc app signature. Set `GLASSDB_ALLOW_AD_HOC_RELEASE=1` only for local
+   smoke checks.
+
+6. Commit the updated files under `docs/releases/`, push `main`, and enable
+   GitHub Pages with the GitHub Actions source in repository settings.
+
+Sparkle requires both a code-signed app archive and the EdDSA signature in the
+appcast for update archives.
+
+The `Release GlassDB` GitHub Actions workflow can run the public release path on
+`macos-26`. Configure these repository secrets before using it:
+
+- `DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64`: base64-encoded Developer ID
+  Application `.p12`
+- `DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD`: password for that `.p12`
+- `DEVELOPER_ID_APPLICATION_IDENTITY`: exact codesign identity name, for
+  example `Developer ID Application: ...`
+- `SPARKLE_ED_PRIVATE_KEY`: exported Sparkle EdDSA private key
+- either `APPLE_ID`, `APPLE_TEAM_ID`, and `APPLE_APP_SPECIFIC_PASSWORD`, or
+  `APP_STORE_CONNECT_API_KEY_ID`, `APP_STORE_CONNECT_API_ISSUER_ID`, and
+  `APP_STORE_CONNECT_API_KEY_BASE64`
+
+Check local and GitHub release readiness with:
+
+```sh
+scripts/check-release-prereqs.sh
+```
+
+You can populate the GitHub secrets without printing secret values by running:
+
+```sh
+.build/artifacts/sparkle/Sparkle/bin/generate_keys -x /path/to/sparkle-private-key
+DEVELOPER_ID_APPLICATION_CERTIFICATE_PATH=/path/to/cert.p12 \
+DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD=... \
+SPARKLE_ED_KEY_FILE=/path/to/sparkle-private-key \
+APPLE_ID=... APPLE_TEAM_ID=... APPLE_APP_SPECIFIC_PASSWORD=... \
+scripts/set-github-release-secrets.sh
+```
+
 ## Repository Guidance
 
 - `AGENTS.md` contains durable instructions for Codex and other agents.

@@ -10,9 +10,15 @@ let package = Package(
     products: [
         .executable(name: "GlassDB", targets: ["GlassDB"])
     ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.7.0")
+    ],
     targets: [
         .executableTarget(
             name: "GlassDB",
+            dependencies: [
+                .product(name: "Sparkle", package: "Sparkle")
+            ],
             linkerSettings: [
                 .linkedLibrary("sqlite3")
             ]

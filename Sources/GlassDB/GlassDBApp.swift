@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct GlassDBApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var model = AppModel()
+    @StateObject private var updaterModel = UpdaterModel()
 
     var body: some Scene {
         WindowGroup("GlassDB") {
@@ -25,6 +26,12 @@ struct GlassDBApp: App {
                     Task { await model.refresh() }
                 }
                 .keyboardShortcut("r", modifiers: .command)
+            }
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates...") {
+                    updaterModel.checkForUpdates()
+                }
+                .disabled(!updaterModel.canCheckForUpdates)
             }
         }
     }
