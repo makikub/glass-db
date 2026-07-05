@@ -31,19 +31,19 @@ actor ConnectionSession {
         filter: FilterState?
     ) async throws -> ResultSet {
         let offset = max(0, page) * pageSize
-        var sql = "SELECT * FROM \(quoteIdentifier(table.name))"
+        var sql = "SELECT * FROM \(driver.quoteIdentifier(table.name))"
         if let whereClause = whereClause(for: filter) {
             sql += " WHERE \(whereClause)"
         }
         if let sort {
-            sql += " ORDER BY \(quoteIdentifier(sort.column)) \(sort.direction.rawValue)"
+            sql += " ORDER BY \(driver.quoteIdentifier(sort.column)) \(sort.direction.rawValue)"
         }
         sql += " LIMIT \(pageSize) OFFSET \(offset)"
         return try await driver.query(sql, limit: nil)
     }
 
     func rowCount(in table: TableRef, filter: FilterState?) async throws -> Int {
-        var sql = "SELECT COUNT(*) AS count FROM \(quoteIdentifier(table.name))"
+        var sql = "SELECT COUNT(*) AS count FROM \(driver.quoteIdentifier(table.name))"
         if let whereClause = whereClause(for: filter) {
             sql += " WHERE \(whereClause)"
         }
@@ -78,7 +78,7 @@ actor ConnectionSession {
     private func whereClause(for filter: FilterState?) -> String? {
         guard let filter, !filter.column.isEmpty else { return nil }
 
-        let column = quoteIdentifier(filter.column)
+        let column = driver.quoteIdentifier(filter.column)
         switch filter.op {
         case .isNull, .isNotNull:
             return "\(column) \(filter.op.rawValue)"

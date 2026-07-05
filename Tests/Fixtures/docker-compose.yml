@@ -1,0 +1,33 @@
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: glassdb-root
+      MYSQL_DATABASE: glassdb
+      MYSQL_USER: glassdb
+      MYSQL_PASSWORD: glassdb
+    ports:
+      - "33076:3306"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uglassdb -pglassdb --silent"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - ./mysql.sql:/fixtures/mysql.sql:ro
+
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: glassdb
+      POSTGRES_USER: glassdb
+      POSTGRES_PASSWORD: glassdb
+    ports:
+      - "54376:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U glassdb -d glassdb"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - ./postgres.sql:/fixtures/postgres.sql:ro

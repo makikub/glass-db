@@ -15,6 +15,24 @@ swift build -c debug
 swift test
 ```
 
+Integration tests can start real MySQL and PostgreSQL containers, load fixture
+data, and verify them through `ConnectionSession` using test-only drivers backed
+by the native database clients. They are opt-in because they pull Docker images
+and create containers:
+
+```sh
+GLASSDB_INTEGRATION_DATABASES=1 swift test --disable-sandbox --filter DatabaseIntegrationTests
+```
+
+Set `GLASSDB_KEEP_INTEGRATION_CONTAINERS=1` to leave the containers running for
+inspection after the test.
+
+The same flow is available as:
+
+```sh
+scripts/run-database-integration-tests.sh
+```
+
 For local visual checks with the app bundle:
 
 ```sh

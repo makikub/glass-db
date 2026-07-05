@@ -142,6 +142,13 @@ protocol DatabaseDriver: Sendable {
     func query(_ sql: String, limit: Int?) async throws -> ResultSet
     func execute(_ sql: String) async throws -> Int
     func disconnect() async
+    func quoteIdentifier(_ identifier: String) -> String
+}
+
+extension DatabaseDriver {
+    func quoteIdentifier(_ identifier: String) -> String {
+        "\"\(identifier.replacingOccurrences(of: "\"", with: "\"\""))\""
+    }
 }
 
 enum DatabaseError: LocalizedError, Sendable {
