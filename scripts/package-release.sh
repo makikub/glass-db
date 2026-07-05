@@ -51,6 +51,9 @@ mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Frameworks" "$repo_root/do
 mkdir -p "$app_dir/Contents/Resources"
 
 cp "$executable" "$app_dir/Contents/MacOS/GlassDB"
+if ! otool -l "$app_dir/Contents/MacOS/GlassDB" | grep -q '@executable_path/../Frameworks'; then
+  install_name_tool -add_rpath "@executable_path/../Frameworks" "$app_dir/Contents/MacOS/GlassDB"
+fi
 if [[ -f "$icon_path" ]]; then
   cp "$icon_path" "$app_dir/Contents/Resources/GlassDB.icns"
 elif [[ -d "$asset_catalog" ]]; then

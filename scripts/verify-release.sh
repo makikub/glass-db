@@ -45,6 +45,7 @@ info="$app/Contents/Info.plist"
 [[ -f "$app/Contents/MacOS/GlassDB" ]] || fail "archive is missing executable"
 [[ -d "$app/Contents/Frameworks/Sparkle.framework" ]] || fail "archive is missing Sparkle.framework"
 [[ -f "$app/Contents/Resources/GlassDB.icns" || -f "$app/Contents/Resources/Assets.car" ]] || fail "archive is missing app icon resources"
+otool -l "$app/Contents/MacOS/GlassDB" | grep -q '@executable_path/../Frameworks' || fail "executable is missing @executable_path/../Frameworks rpath"
 if find "$app" \( -name '._*' -o -name '__MACOSX' -o -name '.DS_Store' \) -print -quit | grep -q .; then
   fail "extracted app contains AppleDouble or Finder metadata files"
 fi
