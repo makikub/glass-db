@@ -52,7 +52,7 @@ struct WelcomeView: View {
             VStack(spacing: 8) {
                 Text("GlassDB")
                     .font(.system(size: 44, weight: .semibold))
-                Text("Open a SQLite database and inspect tables in a read-only grid.")
+                Text("Connect to a database and inspect tables in a read-only grid.")
                     .foregroundStyle(.secondary)
             }
 
@@ -73,11 +73,74 @@ struct WelcomeView: View {
                 .controlSize(.large)
             }
 
-            Text("MySQL and PostgreSQL connection management are intentionally deferred beyond the MVP.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+            Divider()
+                .frame(maxWidth: 520)
+
+            MySQLConnectionForm()
         }
         .padding(40)
+    }
+}
+
+struct MySQLConnectionForm: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var model = model
+
+        VStack(alignment: .leading, spacing: 12) {
+            Label("MySQL", systemImage: "server.rack")
+                .font(.headline)
+
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
+                GridRow {
+                    Text("Host")
+                        .foregroundStyle(.secondary)
+                    TextField("127.0.0.1", text: $model.mysqlHost)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 240)
+
+                    Text("Port")
+                        .foregroundStyle(.secondary)
+                    TextField("3306", text: $model.mysqlPort)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 80)
+                }
+
+                GridRow {
+                    Text("Database")
+                        .foregroundStyle(.secondary)
+                    TextField("glassdb", text: $model.mysqlDatabase)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 240)
+
+                    Text("User")
+                        .foregroundStyle(.secondary)
+                    TextField("glassdb", text: $model.mysqlUser)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 160)
+                }
+
+                GridRow {
+                    Text("Password")
+                        .foregroundStyle(.secondary)
+                    SecureField("Password", text: $model.mysqlPassword)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 240)
+
+                    Color.clear
+                    Button {
+                        Task { await model.openMySQL() }
+                    } label: {
+                        Label("Connect", systemImage: "network")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!model.canConnectMySQL || model.isLoading)
+                }
+            }
+            .font(.callout)
+        }
+        .frame(maxWidth: 620, alignment: .leading)
     }
 }
 

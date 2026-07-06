@@ -1,8 +1,10 @@
 # GlassDB
 
-GlassDB is a SwiftUI macOS database viewer MVP. It currently focuses on SQLite:
+GlassDB is a SwiftUI macOS database viewer MVP. It currently supports SQLite
+files and read-only MySQL connections:
 
 - open or create a sample SQLite database
+- connect to a MySQL database with host, port, database, user, and password
 - browse tables from a sidebar
 - view rows in a read-only grid
 - sort, filter, page, count rows, and copy values

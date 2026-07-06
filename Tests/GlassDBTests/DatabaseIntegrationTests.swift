@@ -71,6 +71,21 @@ struct DatabaseIntegrationTests {
         ))
         try await assertProjectsFixture(using: mysqlDriver, schema: "glassdb")
 
+        let productionMySQLDriver = MySQLDriver()
+        try await productionMySQLDriver.connect(config: ConnectionConfig(
+            name: "MySQL fixture",
+            kind: .mysql,
+            host: "127.0.0.1",
+            port: 33076,
+            database: "glassdb",
+            user: "glassdb",
+            password: "glassdb"
+        ))
+        defer {
+            Task { await productionMySQLDriver.disconnect() }
+        }
+        try await assertProjectsFixture(using: productionMySQLDriver, schema: "glassdb")
+
         _ = try docker.exec(service: "postgres", arguments: [
             "psql", "-U", "glassdb", "-d", "glassdb", "-f", "/fixtures/postgres.sql"
         ])

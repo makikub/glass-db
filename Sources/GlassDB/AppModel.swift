@@ -13,6 +13,11 @@ final class AppModel {
     var screen: Screen = .welcome
     var databasePath = ""
     var connectionName = "SQLite Database"
+    var mysqlHost = "127.0.0.1"
+    var mysqlPort = "3306"
+    var mysqlDatabase = ""
+    var mysqlUser = ""
+    var mysqlPassword = ""
     var schemas: [SchemaInfo] = []
     var tables: [TableInfo] = []
     var filterText = ""
@@ -64,15 +69,23 @@ final class AppModel {
         return FilterState(column: filterColumn, op: filterOperator, value: filterValue)
     }
 
+    var canConnectMySQL: Bool {
+        !mysqlHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && Int(mysqlPort) != nil
+            && !mysqlDatabase.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !mysqlUser.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     func openSQLite(path: String) async {
         isLoading = true
         errorMessage = nil
-        selectedTable = nil
-        tableColumns = []
-        resultSet = ResultSet(columns: [], rows: [])
-        totalRows = nil
+        if let session {
+            await session.disconnect()
+        }
+        resetWorkspace()
         databasePath = path
         connectionName = URL(fileURLWithPath: path).lastPathComponent
+        sqlText = "SELECT name, type FROM sqlite_master ORDER BY type, name"
 
         let config = ConnectionConfig(name: connectionName, kind: .sqlite, filePath: path)
         let session = ConnectionSession(driver: SQLiteDriver())
@@ -81,6 +94,44 @@ final class AppModel {
             self.session = session
             schemas = try await session.schemas()
             tables = try await session.tables(in: schemas.first?.name ?? "main")
+            screen = .database
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isLoading = false
+    }
+
+    func openMySQL() async {
+        isLoading = true
+        errorMessage = nil
+        if let session {
+            await session.disconnect()
+        }
+        resetWorkspace()
+
+        let host = mysqlHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        let database = mysqlDatabase.trimmingCharacters(in: .whitespacesAndNewlines)
+        let user = mysqlUser.trimmingCharacters(in: .whitespacesAndNewlines)
+        let port = Int(mysqlPort.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 3306
+        connectionName = "MySQL: \(database)"
+        databasePath = "\(host):\(port)/\(database)"
+
+        let config = ConnectionConfig(
+            name: connectionName,
+            kind: .mysql,
+            host: host,
+            port: port,
+            database: database,
+            user: user,
+            password: mysqlPassword.isEmpty ? nil : mysqlPassword
+        )
+        let session = ConnectionSession(driver: MySQLDriver())
+        do {
+            try await session.connect(config: config)
+            self.session = session
+            schemas = try await session.schemas()
+            tables = try await session.tables(in: schemas.first?.name ?? database)
+            sqlText = "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = \(quoteLiteral(database)) ORDER BY table_type, table_name"
             screen = .database
         } catch {
             errorMessage = error.localizedDescription
@@ -307,6 +358,20 @@ final class AppModel {
         if sqlHistory.count > 10 {
             sqlHistory.removeLast(sqlHistory.count - 10)
         }
+    }
+
+    private func resetWorkspace() {
+        selectedTable = nil
+        tableColumns = []
+        resultSet = ResultSet(columns: [], rows: [])
+        selectedCell = nil
+        totalRows = nil
+        page = 0
+        sortState = nil
+        filterColumn = ""
+        filterOperator = .equals
+        filterValue = ""
+        sqlStatusMessage = ""
     }
 }
 

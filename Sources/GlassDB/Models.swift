@@ -17,6 +17,7 @@ struct ConnectionConfig: Identifiable, Sendable {
     var port: Int?
     var database: String?
     var user: String?
+    var password: String?
 }
 
 struct SchemaInfo: Identifiable, Sendable, Hashable {
