@@ -58,7 +58,19 @@ appcast live under `docs/` and are deployed to GitHub Pages.
    scripts/make-app-icon.sh
    ```
 
-3. Package the app:
+3. Run the release harness:
+
+   ```sh
+   GLASSDB_CODESIGN_IDENTITY="Developer ID Application: ..." \
+   GLASSDB_NOTARY_PROFILE=glassdb-notary \
+   scripts/release.sh 0.1.0 1
+   ```
+
+   This packages the app, notarizes it when a notary profile is provided,
+   regenerates the Sparkle appcast after the final archive is written, and
+   verifies the release.
+
+   For lower-level packaging only:
 
    ```sh
    scripts/package-release.sh 0.1.0 1
@@ -73,7 +85,7 @@ appcast live under `docs/` and are deployed to GitHub Pages.
    notarytool keychain profile, also pass `GLASSDB_NOTARY_PROFILE=<profile>` to
    notarize and staple the app before the public zip is written.
 
-4. Generate the appcast:
+4. Generate the appcast manually, if you used the lower-level packaging step:
 
    ```sh
    scripts/update-appcast.sh
@@ -86,7 +98,7 @@ appcast live under `docs/` and are deployed to GitHub Pages.
    appcasts fail by default; set `GLASSDB_ALLOW_UNSIGNED_APPCAST=1` only for
    local smoke checks.
 
-5. Verify the release artifacts:
+5. Verify the release artifacts manually, if you used the lower-level steps:
 
    ```sh
    scripts/verify-release.sh 0.1.0 1

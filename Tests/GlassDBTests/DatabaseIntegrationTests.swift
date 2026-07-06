@@ -2,7 +2,9 @@ import Foundation
 import Testing
 @testable import GlassDB
 
-@Suite
+private let databaseIntegrationEnabled = ProcessInfo.processInfo.environment["GLASSDB_INTEGRATION_DATABASES"] == "1"
+
+@Suite(.serialized)
 struct DatabaseIntegrationTests {
     @Test
     func sqliteFixtureExercisesDriverAndSession() async throws {
@@ -42,13 +44,78 @@ struct DatabaseIntegrationTests {
         #expect(count == 3)
     }
 
-    @Test
-    func dockerDatabasesLoadFixturesAndAnswerQueries() async throws {
-        guard ProcessInfo.processInfo.environment["GLASSDB_INTEGRATION_DATABASES"] == "1" else {
-            return
-        }
+    @Test(
+        "Docker MySQL fixture driver answers queries",
+        .enabled(if: databaseIntegrationEnabled, "Set GLASSDB_INTEGRATION_DATABASES=1 to run Docker-backed database tests.")
+    )
+    func dockerMySQLFixtureDriverAnswersQueries() async throws {
+        try await withDockerFixture(projectName: "glassdb-integration-tests-mysql-cli") { docker in
+            try loadMySQLFixture(using: docker)
 
-        let docker = DockerCompose(projectName: "glassdb-integration-tests", root: ProjectPaths.root)
+            let mysqlDriver = DockerSQLDriver(docker: docker, service: "mysql", dialect: .mysql)
+            try await mysqlDriver.connect(config: ConnectionConfig(
+                name: "MySQL fixture",
+                kind: .mysql,
+                host: "127.0.0.1",
+                port: 33076,
+                database: "glassdb",
+                user: "glassdb"
+            ))
+            try await assertProjectsFixture(using: mysqlDriver, schema: "glassdb")
+        }
+    }
+
+    @Test(
+        "Production MySQL driver answers queries",
+        .enabled(if: databaseIntegrationEnabled, "Set GLASSDB_INTEGRATION_DATABASES=1 to run Docker-backed database tests.")
+    )
+    func productionMySQLDriverAnswersQueries() async throws {
+        try await withDockerFixture(projectName: "glassdb-integration-tests-mysql-driver") { docker in
+            try loadMySQLFixture(using: docker)
+
+            let productionMySQLDriver = MySQLDriver()
+            try await productionMySQLDriver.connect(config: ConnectionConfig(
+                name: "MySQL fixture",
+                kind: .mysql,
+                host: "127.0.0.1",
+                port: 33076,
+                database: "glassdb",
+                user: "glassdb",
+                password: "glassdb"
+            ))
+            defer {
+                Task { await productionMySQLDriver.disconnect() }
+            }
+            try await assertProjectsFixture(using: productionMySQLDriver, schema: "glassdb")
+        }
+    }
+
+    @Test(
+        "Docker PostgreSQL fixture driver answers queries",
+        .enabled(if: databaseIntegrationEnabled, "Set GLASSDB_INTEGRATION_DATABASES=1 to run Docker-backed database tests.")
+    )
+    func dockerPostgreSQLFixtureDriverAnswersQueries() async throws {
+        try await withDockerFixture(projectName: "glassdb-integration-tests-postgres-cli") { docker in
+            try loadPostgreSQLFixture(using: docker)
+
+            let postgresDriver = DockerSQLDriver(docker: docker, service: "postgres", dialect: .postgresql)
+            try await postgresDriver.connect(config: ConnectionConfig(
+                name: "PostgreSQL fixture",
+                kind: .postgresql,
+                host: "127.0.0.1",
+                port: 54376,
+                database: "glassdb",
+                user: "glassdb"
+            ))
+            try await assertProjectsFixture(using: postgresDriver, schema: "public")
+        }
+    }
+
+    private func withDockerFixture(
+        projectName: String,
+        _ body: (DockerCompose) async throws -> Void
+    ) async throws {
+        let docker = DockerCompose(projectName: projectName, root: ProjectPaths.root)
         try? docker.down(removeVolumes: true)
         try docker.up()
         defer {
@@ -56,49 +123,19 @@ struct DatabaseIntegrationTests {
                 try? docker.down(removeVolumes: true)
             }
         }
+        try await body(docker)
+    }
 
+    private func loadMySQLFixture(using docker: DockerCompose) throws {
         _ = try docker.exec(service: "mysql", arguments: [
             "sh", "-c", "mysql -uglassdb -pglassdb glassdb < /fixtures/mysql.sql"
         ])
-        let mysqlDriver = DockerSQLDriver(docker: docker, service: "mysql", dialect: .mysql)
-        try await mysqlDriver.connect(config: ConnectionConfig(
-            name: "MySQL fixture",
-            kind: .mysql,
-            host: "127.0.0.1",
-            port: 33076,
-            database: "glassdb",
-            user: "glassdb"
-        ))
-        try await assertProjectsFixture(using: mysqlDriver, schema: "glassdb")
+    }
 
-        let productionMySQLDriver = MySQLDriver()
-        try await productionMySQLDriver.connect(config: ConnectionConfig(
-            name: "MySQL fixture",
-            kind: .mysql,
-            host: "127.0.0.1",
-            port: 33076,
-            database: "glassdb",
-            user: "glassdb",
-            password: "glassdb"
-        ))
-        defer {
-            Task { await productionMySQLDriver.disconnect() }
-        }
-        try await assertProjectsFixture(using: productionMySQLDriver, schema: "glassdb")
-
+    private func loadPostgreSQLFixture(using docker: DockerCompose) throws {
         _ = try docker.exec(service: "postgres", arguments: [
             "psql", "-U", "glassdb", "-d", "glassdb", "-f", "/fixtures/postgres.sql"
         ])
-        let postgresDriver = DockerSQLDriver(docker: docker, service: "postgres", dialect: .postgresql)
-        try await postgresDriver.connect(config: ConnectionConfig(
-            name: "PostgreSQL fixture",
-            kind: .postgresql,
-            host: "127.0.0.1",
-            port: 54376,
-            database: "glassdb",
-            user: "glassdb"
-        ))
-        try await assertProjectsFixture(using: postgresDriver, schema: "public")
     }
 
     private func assertProjectsFixture(using driver: some DatabaseDriver, schema: String) async throws {
