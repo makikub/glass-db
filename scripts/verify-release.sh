@@ -62,7 +62,7 @@ fi
 [[ "$feed_url" == "https://makikub.github.io/glass-db/releases/appcast.xml" ]] || fail "unexpected SUFeedURL: $feed_url"
 [[ -n "$public_key" && "$public_key" != "dummy" ]] || fail "SUPublicEDKey must be a real Sparkle public key"
 
-codesign --verify --deep --strict "$app" || fail "codesign verification failed"
+"$repo_root/scripts/verify-app-signatures.sh" "$app" || fail "app or Sparkle signature verification failed"
 codesign_details="$(codesign -dv --verbose=4 "$app" 2>&1)"
 if [[ "$allow_ad_hoc" != "1" ]] && grep -q "Signature=adhoc" <<<"$codesign_details"; then
   fail "app is ad-hoc signed; use Developer ID signing for public release"
