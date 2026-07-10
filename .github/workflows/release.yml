@@ -60,7 +60,9 @@ jobs:
         run: scripts/make-app-icon.sh
 
       - name: Test
-        run: swift test
+        run: |
+          Tests/ReleaseScripts/verify-app-signatures-tests.sh
+          swift test
 
       - name: Package release
         run: scripts/package-release.sh "${{ steps.version.outputs.version }}" "${{ steps.version.outputs.build_number }}"

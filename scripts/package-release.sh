@@ -128,6 +128,7 @@ codesign "${codesign_args[@]}" "$sparkle_version_dir/Updater.app"
 codesign "${codesign_args[@]}" "$sparkle_version_dir/Autoupdate"
 codesign "${codesign_args[@]}" "$app_dir/Contents/Frameworks/Sparkle.framework"
 codesign "${codesign_args[@]}" --identifier "$bundle_id" "$app_dir"
+"$repo_root/scripts/verify-app-signatures.sh" "$app_dir"
 
 if [[ -n "$notary_profile" ]]; then
   notary_zip="$repo_root/build/release/GlassDB-notary-${version}.zip"
@@ -135,11 +136,16 @@ if [[ -n "$notary_profile" ]]; then
   COPYFILE_DISABLE=1 ditto -c -k --keepParent --norsrc --noextattr --noqtn --noacl "$app_dir" "$notary_zip"
   xcrun notarytool submit "$notary_zip" --keychain-profile "$notary_profile" --wait
   xcrun stapler staple "$app_dir"
-  codesign --verify --deep --strict "$app_dir"
+  "$repo_root/scripts/verify-app-signatures.sh" "$app_dir"
 fi
 
 rm -f "$zip_path"
 COPYFILE_DISABLE=1 ditto -c -k --keepParent --norsrc --noextattr --noqtn --noacl "$app_dir" "$zip_path"
+
+archive_verify_dir="$(mktemp -d "/tmp/gdbpkg.XXXXXX")"
+trap 'rm -rf "$archive_verify_dir"' EXIT
+ditto -x -k "$zip_path" "$archive_verify_dir"
+"$repo_root/scripts/verify-app-signatures.sh" "$archive_verify_dir/GlassDB.app"
 
 echo "Created $app_dir"
 echo "Created $zip_path"

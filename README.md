@@ -73,13 +73,14 @@ appcast live under `docs/` and are deployed to GitHub Pages.
    For lower-level packaging only:
 
    ```sh
-   scripts/package-release.sh 0.1.0 1
+   GLASSDB_ALLOW_AD_HOC_RELEASE=1 scripts/package-release.sh 0.1.0 1
    ```
 
    The default feed URL is
    `https://makikub.github.io/glass-db/releases/appcast.xml`. Override it with
    `SPARKLE_FEED_URL` if the Pages URL changes. The script uses ad-hoc signing
-   by default for local smoke checks. For a dummy local smoke check, set
+   by default, but requires `GLASSDB_ALLOW_AD_HOC_RELEASE=1` to acknowledge a
+   local-only smoke archive. For a dummy local smoke check, also set
    `GLASSDB_ALLOW_DUMMY_PUBLIC_KEY=1`. For public distribution, pass
    `GLASSDB_CODESIGN_IDENTITY="Developer ID Application: ..."`. If you have a
    notarytool keychain profile, also pass `GLASSDB_NOTARY_PROFILE=<profile>` to
