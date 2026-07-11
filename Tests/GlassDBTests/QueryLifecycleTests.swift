@@ -23,7 +23,32 @@ struct QueryLifecycleTests {
 
         #expect(model.queryExecutionState == .disconnected)
         #expect(model.errorMessage?.contains("timed out after 1 seconds") == true)
+        await model.reconnect()
+        #expect(model.queryExecutionState == .idle)
         #expect(await driver.disconnectCount == 1)
+    }
+
+    @Test @MainActor
+    func repeatedTimeoutCompletionDoesNotCorruptTaskLifetime() async throws {
+        for _ in 0..<20 {
+            let driver = LifecycleDriver(mode: .slow)
+            let model = AppModel(
+                profileStore: LifecycleProfileStore(),
+                passwordStore: LifecyclePasswordStore(),
+                driverProvider: LifecycleDriverProvider(driver: driver),
+                queryTimeoutSeconds: 0
+            )
+            model.mysqlDatabase = "glassdb"
+            model.mysqlUser = "reader"
+            await model.openMySQL()
+            model.sqlText = "SELECT SLOW"
+
+            await model.runSQL()
+            await waitUntil { model.queryExecutionState == .disconnected }
+            await model.reconnect()
+
+            #expect(model.queryExecutionState == .idle)
+        }
     }
 
     @Test @MainActor
@@ -41,12 +66,12 @@ struct QueryLifecycleTests {
         model.sqlText = "SELECT SLOW"
 
         await model.runSQL()
-        try await Task.sleep(for: .milliseconds(50))
+        try await Task.sleep(nanoseconds: 50_000_000)
         await model.cancelQuery()
 
         #expect(model.queryExecutionState == .disconnected)
         #expect(model.errorMessage?.hasPrefix("Query cancelled") == true)
-        try? await Task.sleep(for: .milliseconds(50))
+        try? await Task.sleep(nanoseconds: 50_000_000)
         #expect(model.errorMessage?.hasPrefix("Query cancelled") == true)
     }
 
@@ -99,7 +124,7 @@ struct QueryLifecycleTests {
     @MainActor
     private func waitUntil(_ condition: @escaping @MainActor () -> Bool) async {
         for _ in 0..<200 where !condition() {
-            try? await Task.sleep(for: .milliseconds(10))
+            try? await Task.sleep(nanoseconds: 10_000_000)
         }
     }
 }
@@ -117,7 +142,7 @@ private actor LifecycleDriver: DatabaseDriver {
         guard sql.contains("SLOW") || sql.contains("LOST") else { return ResultSet(columns: [], rows: []) }
         switch mode {
         case .slow:
-            try await Task.sleep(for: .seconds(60))
+            try await Task.sleep(nanoseconds: 60_000_000_000)
             return ResultSet(columns: [], rows: [])
         case .connectionLoss:
             throw DatabaseError.connectionLost("MySQL query failed: server closed the connection unexpectedly")
