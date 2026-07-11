@@ -46,9 +46,10 @@ struct ContentView: View {
 struct WelcomeView: View {
     @Environment(AppModel.self) private var model
     @Binding var isImporterPresented: Bool
+    @State private var editorProfile: ConnectionProfile?
 
     var body: some View {
-        VStack(spacing: 24) {
+        VStack(alignment: .leading, spacing: 24) {
             VStack(spacing: 8) {
                 Text("GlassDB")
                     .font(.system(size: 44, weight: .semibold))
@@ -73,12 +74,16 @@ struct WelcomeView: View {
                 .controlSize(.large)
             }
 
+            SavedConnectionsView(editorProfile: $editorProfile)
+
             Divider()
-                .frame(maxWidth: 520)
 
             ServerConnectionForm()
         }
         .padding(40)
+        .sheet(item: $editorProfile) { profile in
+            ConnectionProfileEditor(profile: profile)
+        }
     }
 }
 

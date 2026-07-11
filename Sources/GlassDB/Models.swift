@@ -20,6 +20,56 @@ struct ConnectionConfig: Identifiable, Sendable {
     var password: String?
 }
 
+struct ConnectionProfile: Codable, Identifiable, Sendable, Hashable {
+    var id: UUID
+    var name: String
+    var kind: DatabaseKind
+    var filePath: String?
+    var sqliteBookmark: Data?
+    var host: String?
+    var port: Int?
+    var database: String?
+    var user: String?
+
+    init(
+        id: UUID = UUID(),
+        name: String,
+        kind: DatabaseKind,
+        filePath: String? = nil,
+        sqliteBookmark: Data? = nil,
+        host: String? = nil,
+        port: Int? = nil,
+        database: String? = nil,
+        user: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.kind = kind
+        self.filePath = filePath
+        self.sqliteBookmark = sqliteBookmark
+        self.host = host
+        self.port = port
+        self.database = database
+        self.user = user
+    }
+
+    func connectionConfig(password: String? = nil, sqlitePath: String? = nil) -> ConnectionConfig {
+        ConnectionConfig(
+            id: id,
+            name: name,
+            kind: kind,
+            filePath: sqlitePath ?? filePath,
+            host: host,
+            port: port,
+            database: database,
+            user: user,
+            password: password
+        )
+    }
+}
+
+extension DatabaseKind: Codable {}
+
 struct SchemaInfo: Identifiable, Sendable, Hashable {
     var id: String { name }
     let name: String

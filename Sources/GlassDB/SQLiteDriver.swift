@@ -19,7 +19,7 @@ actor SQLiteDriver: DatabaseDriver {
             if let handle {
                 sqlite3_close(handle)
             }
-            throw DatabaseError.connectionFailed(message)
+            throw DatabaseError.connectionFailed("SQLite connection failed: \(message)")
         }
 
         db = handle
