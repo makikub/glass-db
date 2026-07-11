@@ -1,5 +1,7 @@
 DROP SCHEMA IF EXISTS analytics CASCADE;
 DROP VIEW IF EXISTS active_projects;
+DROP TABLE IF EXISTS primary_key_collision_other;
+DROP TABLE IF EXISTS primary_key_collision_source;
 DROP TABLE IF EXISTS projects;
 CREATE TABLE projects (
     id BIGINT PRIMARY KEY,
@@ -24,3 +26,15 @@ CREATE VIEW analytics.project_statuses AS
 SELECT status, COUNT(*) AS project_count
 FROM public.projects
 GROUP BY status;
+
+CREATE TABLE primary_key_collision_source (
+    id BIGINT NOT NULL,
+    collision_value BIGINT NOT NULL,
+    CONSTRAINT shared_pk PRIMARY KEY (id)
+);
+
+CREATE TABLE primary_key_collision_other (
+    id BIGINT NOT NULL,
+    collision_value BIGINT NOT NULL,
+    CONSTRAINT shared_pk PRIMARY KEY (collision_value)
+);

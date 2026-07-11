@@ -19,6 +19,17 @@ struct PostgreSQLDriverTests {
     func appliesAutomaticLimitWithoutLeavingTrailingSemicolon() {
         #expect(PostgreSQLDriver.limitedSQL("SELECT id FROM projects;", limit: 25) == "SELECT id FROM projects LIMIT 25")
         #expect(PostgreSQLDriver.limitedSQL("SELECT id FROM projects LIMIT 5", limit: 25) == "SELECT id FROM projects LIMIT 5")
+        #expect(PostgreSQLDriver.limitedSQL("select id from projects limit 5", limit: 25) == "select id from projects limit 5")
+        #expect(PostgreSQLDriver.limitedSQL("SeLeCt id FrOm projects LiMiT 5", limit: 25) == "SeLeCt id FrOm projects LiMiT 5")
+        #expect(PostgreSQLDriver.limitedSQL("SELECT id\nFROM projects\nLIMIT 5", limit: 25) == "SELECT id\nFROM projects\nLIMIT 5")
+    }
+
+    @Test
+    func disambiguatesDuplicateResultColumnNames() {
+        #expect(PostgreSQLDriver.uniqueColumnNames(["id", "id", "name", "id", "name"]) == [
+            "id", "id_2", "name", "id_3", "name_2",
+        ])
+        #expect(PostgreSQLDriver.uniqueColumnNames(["id", "id_2", "id"]) == ["id", "id_2", "id_3"])
     }
 
     @Test

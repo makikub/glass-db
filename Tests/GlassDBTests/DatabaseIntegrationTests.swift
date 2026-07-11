@@ -155,7 +155,11 @@ struct DatabaseIntegrationTests {
                 12.340::numeric AS numeric_value,
                 true AS bool_value,
                 '550e8400-e29b-41d4-a716-446655440000'::uuid AS uuid_value,
-                decode('00ff', 'hex') AS blob_value
+                decode('00ff', 'hex') AS blob_value,
+                DATE '2026-07-02' AS date_value,
+                TIMESTAMP '2026-07-02 03:04:05' AS timestamp_value,
+                TIMESTAMPTZ '2026-07-02 03:04:05+00' AS timestamptz_value,
+                NULL::text AS null_value
             """, limit: nil)
             let values = try #require(typed.rows.first?.values)
             #expect(values["integer_value"] == .integer(42))
@@ -164,6 +168,22 @@ struct DatabaseIntegrationTests {
             #expect(values["bool_value"] == .text("true"))
             #expect(values["uuid_value"] == .text("550e8400-e29b-41d4-a716-446655440000"))
             #expect(values["blob_value"] == .blob(Data([0x00, 0xff])))
+            #expect(values["date_value"] == .text("2026-07-02T00:00:00Z"))
+            #expect(values["timestamp_value"] == .text("2026-07-02T03:04:05Z"))
+            #expect(values["timestamptz_value"] == .text("2026-07-02T03:04:05Z"))
+            #expect(values["null_value"] == .null)
+
+            let duplicated = try await driver.query("SELECT id AS duplicate, id AS duplicate FROM public.projects ORDER BY id", limit: nil)
+            #expect(duplicated.columns.map(\.name) == ["duplicate", "duplicate_2"])
+            #expect(duplicated.rows.first?.values["duplicate"] == .integer(1))
+            #expect(duplicated.rows.first?.values["duplicate_2"] == .integer(1))
+
+            let collisionColumns = try await driver.columns(of: TableRef(schema: "public", name: "primary_key_collision_source"))
+            #expect(collisionColumns.first { $0.name == "id" }?.isPrimaryKey == true)
+            #expect(collisionColumns.first { $0.name == "collision_value" }?.isPrimaryKey == false)
+
+            let explicitlyLimited = try await driver.query("SELECT id\nFROM public.projects\nLIMIT 2", limit: 1000)
+            #expect(explicitlyLimited.rows.map { $0.values["id"] } == [.integer(1), .integer(2)])
 
             do {
                 _ = try await driver.query("DELETE FROM public.projects", limit: nil)

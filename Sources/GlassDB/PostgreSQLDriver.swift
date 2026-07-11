@@ -91,6 +91,8 @@ actor PostgreSQLDriver: DatabaseDriver {
                 JOIN information_schema.key_column_usage kcu
                   ON tc.constraint_name = kcu.constraint_name
                  AND tc.constraint_schema = kcu.constraint_schema
+                 AND tc.table_schema = kcu.table_schema
+                 AND tc.table_name = kcu.table_name
                 WHERE tc.constraint_type = 'PRIMARY KEY'
                   AND tc.table_schema = c.table_schema
                   AND tc.table_name = c.table_name
@@ -140,17 +142,18 @@ actor PostgreSQLDriver: DatabaseDriver {
             return ResultSet(columns: [], rows: [])
         }
         let firstCells = Array(first)
-        let columns = firstCells.map { cell in
+        let columnNames = Self.uniqueColumnNames(firstCells.map(\.columnName))
+        let columns = zip(firstCells, columnNames).map { cell, name in
             ColumnInfo(
-                name: cell.columnName,
+                name: name,
                 type: String(describing: cell.dataType),
                 isPrimaryKey: false,
                 isNullable: true
             )
         }
         let resultRows = rows.enumerated().map { index, row in
-            let values = Dictionary(uniqueKeysWithValues: row.map { cell in
-                (cell.columnName, value(from: cell))
+            let values = Dictionary(uniqueKeysWithValues: zip(row, columnNames).map { cell, name in
+                (name, value(from: cell))
             })
             return ResultRow(id: index, values: values)
         }
@@ -188,13 +191,36 @@ actor PostgreSQLDriver: DatabaseDriver {
     nonisolated static func limitedSQL(_ sql: String, limit: Int?) -> String {
         var trimmed = sql.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let limit,
-              !trimmed.localizedCaseInsensitiveContains(" limit ") else {
+              trimmed.range(of: #"\blimit\b"#, options: [.regularExpression, .caseInsensitive]) == nil else {
             return sql
         }
         if trimmed.hasSuffix(";") {
             trimmed.removeLast()
         }
         return "\(trimmed) LIMIT \(limit)"
+    }
+
+    nonisolated static func uniqueColumnNames(_ names: [String]) -> [String] {
+        let reservedNames = Set(names)
+        var usedNames: Set<String> = []
+        var nextSuffix: [String: Int] = [:]
+        return names.map { name in
+            guard usedNames.contains(name) else {
+                usedNames.insert(name)
+                nextSuffix[name] = 2
+                return name
+            }
+
+            var suffix = nextSuffix[name] ?? 2
+            var candidate = "\(name)_\(suffix)"
+            while reservedNames.contains(candidate) || usedNames.contains(candidate) {
+                suffix += 1
+                candidate = "\(name)_\(suffix)"
+            }
+            nextSuffix[name] = suffix + 1
+            usedNames.insert(candidate)
+            return candidate
+        }
     }
 
     private nonisolated func value(from cell: PostgresCell) -> DBValue {
