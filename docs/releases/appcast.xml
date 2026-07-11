@@ -3,6 +3,20 @@
     <channel>
         <title>GlassDB</title>
         <item>
+            <title>0.1.5</title>
+            <pubDate>Sun, 12 Jul 2026 04:46:19 +0900</pubDate>
+            <sparkle:version>6</sparkle:version>
+            <sparkle:shortVersionString>0.1.5</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://makikub.github.io/glass-db/releases/GlassDB-0.1.5.zip" length="10926265" type="application/octet-stream" sparkle:edSignature="ZYMPIgIW65/MntK3kShd7MqiTakasN+P+QA0NYX4jgSlAnllEYU/Mvejv68GywfG/D7aeKHBq1QQHaaXsyZuBg=="/>
+            <sparkle:deltas>
+                <enclosure url="https://makikub.github.io/glass-db/releases/GlassDB6-5.delta" sparkle:deltaFrom="5" length="3117570" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977808" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="cSpbToh0dUIOlX+G27jHGT8ACm94WB/4htv3MkmsjIN96ukgC7Qa9nddA/uUFj34pobf6nVUzXef1bifYRzACw=="/>
+                <enclosure url="https://makikub.github.io/glass-db/releases/GlassDB6-4.delta" sparkle:deltaFrom="4" length="3081798" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977808" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="6GqQreyJclNF6rF4ziWLfuiYHKaNR0YmoKKU6hMjaQ8pyHdOaOGLxEHo52dWgAhW5qk94/Jw3DDVxMBr1WZpBQ=="/>
+                <enclosure url="https://makikub.github.io/glass-db/releases/GlassDB6-3.delta" sparkle:deltaFrom="3" length="5183134" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977808" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="Lqlh/KFY6Blj+gOlzmJ0m8u10Ubkw3mA2qGf+8vhXilb6gcSjlrt2UkZswTeUoUfLxEyfHoBKTnkUMVDFzpPBw=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
             <title>0.1.4</title>
             <pubDate>Sat, 11 Jul 2026 08:28:09 +0900</pubDate>
             <sparkle:version>5</sparkle:version>
@@ -26,15 +40,6 @@
             <sparkle:deltas>
                 <enclosure url="https://makikub.github.io/glass-db/releases/GlassDB4-3.delta" sparkle:deltaFrom="3" length="3248870" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977808" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="LZaKc+pBxZOnSjDIIxiee581eMDDAMDlWz5jGpxmKgHKXOA/TxVdCy9ArxMvHrBj3a2JsKnjvbneoik71l0zDg=="/>
             </sparkle:deltas>
-        </item>
-        <item>
-            <title>0.1.2</title>
-            <pubDate>Mon, 06 Jul 2026 01:45:34 +0900</pubDate>
-            <sparkle:version>3</sparkle:version>
-            <sparkle:shortVersionString>0.1.2</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://makikub.github.io/glass-db/releases/GlassDB-0.1.2.zip" length="4255375" type="application/octet-stream" sparkle:edSignature="BzZdy/6FzFdqVuvIYMCoZ+5nIMi/p61fku4cO0c/qLVxiBKJYQdS4NoIrQ7LK1E/nVmb3jJaz6hTjuuOkVMDBA=="/>
         </item>
     </channel>
 </rss>
