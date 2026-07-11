@@ -175,6 +175,38 @@ enum DBValue: Sendable, Hashable, CustomStringConvertible {
     }
 }
 
+enum PendingChange: Sendable, Hashable, Identifiable {
+    case insert(id: UUID, values: [String: DBValue])
+    case update(id: UUID, originalKey: [String: DBValue], values: [String: DBValue])
+    case delete(id: UUID, originalKey: [String: DBValue])
+
+    var id: UUID {
+        switch self { case .insert(let id, _), .update(let id, _, _), .delete(let id, _): id }
+    }
+}
+
+struct MutationStatement: Sendable, Hashable {
+    enum Kind: Sendable { case insert, update, delete }
+    let sql: String
+    let kind: Kind
+}
+
+enum DataEditingError: LocalizedError, Sendable {
+    case readOnly(String)
+    case invalidValue(column: String, expectedType: String)
+    case missingPrimaryKey(String)
+    case affectedRows(expected: Int, actual: Int)
+
+    var errorDescription: String? {
+        switch self {
+        case .readOnly(let reason): reason
+        case .invalidValue(let column, let type): "\(column) requires a valid \(type) value."
+        case .missingPrimaryKey(let column): "Primary-key value for \(column) is missing."
+        case .affectedRows(let expected, let actual): "Expected \(expected) affected row, but the database reported \(actual). The batch was rolled back."
+        }
+    }
+}
+
 struct ResultRow: Identifiable, Sendable, Hashable {
     let id: Int
     let values: [String: DBValue]
@@ -192,13 +224,62 @@ protocol DatabaseDriver: Sendable {
     func columns(of table: TableRef) async throws -> [ColumnInfo]
     func query(_ sql: String, limit: Int?) async throws -> ResultSet
     func execute(_ sql: String) async throws -> Int
+    func applyMutations(_ statements: [MutationStatement]) async throws
     func disconnect() async
     func quoteIdentifier(_ identifier: String) -> String
+    func mutationLiteral(_ value: DBValue) -> String
 }
 
 extension DatabaseDriver {
     func quoteIdentifier(_ identifier: String) -> String {
         "\"\(identifier.replacingOccurrences(of: "\"", with: "\"\""))\""
+    }
+    func mutationLiteral(_ value: DBValue) -> String {
+        switch value {
+        case .null: "NULL"
+        case .integer(let value): String(value)
+        case .double(let value): value.isFinite ? String(value) : "NULL"
+        case .text(let value), .unknown(let value): quoteLiteral(value)
+        case .blob(let data): "X'\(data.map { String(format: "%02x", $0) }.joined())'"
+        }
+    }
+
+    func mutationStatements(for changes: [PendingChange], table: TableRef, columns: [ColumnInfo]) throws -> [MutationStatement] {
+        let qualified = "\(quoteIdentifier(table.schema)).\(quoteIdentifier(table.name))"
+        let primaryKeys = columns.filter(\.isPrimaryKey)
+        guard !primaryKeys.isEmpty else { throw DataEditingError.readOnly("Tables without a primary key are read-only.") }
+        func predicate(_ key: [String: DBValue]) throws -> String {
+            try primaryKeys.map { column in
+                guard let value = key[column.name] else { throw DataEditingError.missingPrimaryKey(column.name) }
+                return "\(quoteIdentifier(column.name)) = \(mutationLiteral(value))"
+            }.joined(separator: " AND ")
+        }
+        return try changes.map { change in
+            switch change {
+            case .insert(_, let values):
+                let included = columns.filter { values[$0.name] != nil }
+                return MutationStatement(sql: "INSERT INTO \(qualified) (\(included.map { quoteIdentifier($0.name) }.joined(separator: ", "))) VALUES (\(included.map { mutationLiteral(values[$0.name]!) }.joined(separator: ", ")))", kind: .insert)
+            case .update(_, let key, let values):
+                let assignments = columns.compactMap { column in values[column.name].map { "\(quoteIdentifier(column.name)) = \(mutationLiteral($0))" } }
+                return MutationStatement(sql: "UPDATE \(qualified) SET \(assignments.joined(separator: ", ")) WHERE \(try predicate(key))", kind: .update)
+            case .delete(_, let key):
+                return MutationStatement(sql: "DELETE FROM \(qualified) WHERE \(try predicate(key))", kind: .delete)
+            }
+        }
+    }
+
+    func applyMutations(_ statements: [MutationStatement]) async throws {
+        _ = try await execute("BEGIN")
+        do {
+            for statement in statements {
+                let affected = try await execute(statement.sql)
+                if statement.kind != .insert && affected != 1 { throw DataEditingError.affectedRows(expected: 1, actual: affected) }
+            }
+            _ = try await execute("COMMIT")
+        } catch {
+            _ = try? await execute("ROLLBACK")
+            throw error
+        }
     }
 }
 

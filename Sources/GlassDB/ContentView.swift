@@ -217,6 +217,7 @@ struct DatabaseView: View {
                         VStack(spacing: 0) {
                             if model.selectedTable != nil {
                                 TableControlsView()
+                                EditingBarView()
                             }
                             DataGridView()
                         }
@@ -425,6 +426,7 @@ struct WorkspaceHeaderView: View {
 
 struct DataGridView: View {
     @Environment(AppModel.self) private var model
+    @State private var rowPendingDeletion: ResultRow?
 
     var body: some View {
         if model.selectedTable == nil {
@@ -451,7 +453,9 @@ struct DataGridView: View {
                             GridRow {
                                 ForEach(model.resultSet.columns) { column in
                                     let value = row.values[column.name] ?? .null
-                                    ValueCell(value: value) {
+                                    EditableValueCell(value: value, editable: model.canEditTable) { text in
+                                        model.stageEdit(row: row, column: column, text: text)
+                                    } selectAction: {
                                         model.selectedCell = CellSelection(column: column.name, value: value)
                                     } copyAction: {
                                         model.copyCell(value)
@@ -461,6 +465,10 @@ struct DataGridView: View {
                             .contextMenu {
                                 Button("Copy Row") {
                                     model.copyRow(row)
+                                }
+                                if model.canEditTable {
+                                    Divider()
+                                    Button("Delete Row", role: .destructive) { rowPendingDeletion = row }
                                 }
                             }
                         }
@@ -475,7 +483,61 @@ struct DataGridView: View {
             .defaultScrollAnchor(.topLeading)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(Color(nsColor: .textBackgroundColor))
+            .confirmationDialog("Delete this row?", isPresented: Binding(get: { rowPendingDeletion != nil }, set: { if !$0 { rowPendingDeletion = nil } })) {
+                Button("Stage Delete", role: .destructive) { if let rowPendingDeletion { model.stageDelete(row: rowPendingDeletion) }; rowPendingDeletion = nil }
+                Button("Cancel", role: .cancel) { rowPendingDeletion = nil }
+            } message: { Text("The delete remains pending until you choose Apply.") }
         }
+    }
+}
+
+struct EditingBarView: View {
+    @Environment(AppModel.self) private var model
+    @State private var showingInsert = false
+    @State private var insertValues: [String: String] = [:]
+    var body: some View {
+        HStack(spacing: 10) {
+            if let reason = model.tableReadOnlyReason { Label(reason, systemImage: "lock") }
+            else {
+                Button("Add Row", systemImage: "plus") { insertValues = Dictionary(uniqueKeysWithValues: model.tableColumns.map { ($0.name, $0.isNullable ? "NULL" : "") }); showingInsert = true }
+                Text("\(model.pendingChanges.count) pending")
+                Button("Preview SQL") { model.infoMessage = model.mutationSQLPreview.isEmpty ? "No pending SQL." : model.mutationSQLPreview }
+                Spacer()
+                Button("Discard") { model.discardPendingChanges() }.disabled(model.pendingChanges.isEmpty)
+                Button("Apply") { Task { await model.applyPendingChanges() } }.buttonStyle(.borderedProminent).disabled(model.pendingChanges.isEmpty || model.isApplyingMutations)
+            }
+        }
+        .padding(.horizontal, 16).padding(.vertical, 8).frame(maxWidth: .infinity, alignment: .leading).background(.bar)
+        .sheet(isPresented: $showingInsert) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Add Row").font(.title2)
+                Form { ForEach(model.tableColumns) { column in TextField("\(column.name) (\(column.type))", text: Binding(get: { insertValues[column.name] ?? "" }, set: { insertValues[column.name] = $0 })) } }
+                HStack { Spacer(); Button("Cancel") { showingInsert = false }; Button("Stage Insert") { model.stageInsert(values: insertValues); showingInsert = false }.buttonStyle(.borderedProminent) }
+            }.padding(20).frame(minWidth: 440)
+        }
+    }
+}
+
+struct EditableValueCell: View {
+    let value: DBValue
+    let editable: Bool
+    let commit: (String) -> Void
+    let selectAction: () -> Void
+    let copyAction: () -> Void
+    @State private var text = ""
+    @State private var editing = false
+    var body: some View {
+        Group {
+            if editing {
+                TextField("Value", text: $text).textFieldStyle(.plain).onSubmit { commit(text); editing = false }
+            } else {
+                Button { selectAction() } label: { Text(value.description).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading) }.buttonStyle(.plain)
+                    .onTapGesture(count: 2) { if editable { text = value.isNull ? "NULL" : value.description; editing = true } }
+            }
+        }
+        .font(.system(.body, design: .monospaced)).frame(width: 128, height: 34, alignment: .leading).padding(.horizontal, 10)
+        .background(Color(nsColor: .textBackgroundColor)).border(Color(nsColor: .separatorColor), width: 0.5)
+        .contextMenu { Button("Copy Cell") { copyAction() } }
     }
 }
 

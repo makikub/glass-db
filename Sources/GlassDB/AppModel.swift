@@ -48,6 +48,9 @@ final class AppModel {
     var sqlHistory: [String] = []
     var autoLimitSelects = true
     var connectionProfiles: [ConnectionProfile] = []
+    var pendingChanges: [PendingChange] = []
+    var mutationSQLPreview = ""
+    var isApplyingMutations = false
 
     private var session: ConnectionSession?
     private var activeSecurityScopedResource: SQLiteSecurityScopedResource?
@@ -100,6 +103,15 @@ final class AppModel {
     var isTableMode: Bool {
         workspaceMode == .table
     }
+
+    var tableReadOnlyReason: String? {
+        guard let table = selectedTable else { return nil }
+        if table.kind == .view { return "Views are read-only." }
+        if !tableColumns.contains(where: \.isPrimaryKey) { return "Tables without a primary key are read-only." }
+        return nil
+    }
+
+    var canEditTable: Bool { selectedTable != nil && tableReadOnlyReason == nil }
 
     var activeFilter: FilterState? {
         guard !filterColumn.isEmpty else { return nil }
@@ -515,6 +527,7 @@ final class AppModel {
         filterOperator = .equals
         filterValue = ""
         totalRows = nil
+        discardPendingChanges()
         do {
             let tableColumns = try await session.columns(of: TableRef(schema: table.schema, name: table.name))
             self.tableColumns = tableColumns
@@ -523,6 +536,70 @@ final class AppModel {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    func stageEdit(row: ResultRow, column: ColumnInfo, text: String) {
+        guard canEditTable else { return }
+        do {
+            let value = try parsedValue(text, for: column)
+            let key = Dictionary(uniqueKeysWithValues: tableColumns.filter(\.isPrimaryKey).map { ($0.name, row.values[$0.name] ?? .null) })
+            if let index = pendingChanges.firstIndex(where: { if case .update(_, let existing, _) = $0 { return existing == key }; return false }),
+               case .update(let id, let existing, let values) = pendingChanges[index] {
+                pendingChanges[index] = .update(id: id, originalKey: existing, values: values.merging([column.name: value]) { _, new in new })
+            } else {
+                pendingChanges.append(.update(id: UUID(), originalKey: key, values: [column.name: value]))
+            }
+            Task { await refreshMutationPreview() }
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    func stageInsert(values: [String: String]) {
+        guard canEditTable else { return }
+        do {
+            let parsed = try Dictionary(uniqueKeysWithValues: tableColumns.compactMap { column -> (String, DBValue)? in
+                let text = values[column.name] ?? ""
+                if text.isEmpty { return nil }
+                return (column.name, try parsedValue(text, for: column))
+            })
+            pendingChanges.append(.insert(id: UUID(), values: parsed))
+            Task { await refreshMutationPreview() }
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    func stageDelete(row: ResultRow) {
+        guard canEditTable else { return }
+        let key = Dictionary(uniqueKeysWithValues: tableColumns.filter(\.isPrimaryKey).map { ($0.name, row.values[$0.name] ?? .null) })
+        pendingChanges.append(.delete(id: UUID(), originalKey: key))
+        Task { await refreshMutationPreview() }
+    }
+
+    func discardPendingChanges() { pendingChanges = []; mutationSQLPreview = "" }
+
+    func applyPendingChanges() async {
+        guard let session, let table = selectedTable, !pendingChanges.isEmpty, !isApplyingMutations else { return }
+        isApplyingMutations = true
+        defer { isApplyingMutations = false }
+        do {
+            try await session.applyMutations(pendingChanges, table: TableRef(schema: table.schema, name: table.name), columns: tableColumns)
+            discardPendingChanges(); await loadRows()
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func refreshMutationPreview() async {
+        guard let session, let table = selectedTable else { return }
+        let snapshot = pendingChanges
+        do { let preview = try await session.previewMutations(snapshot, table: TableRef(schema: table.schema, name: table.name), columns: tableColumns).map(\.sql).joined(separator: ";\n"); if snapshot == pendingChanges { mutationSQLPreview = preview } }
+        catch { errorMessage = error.localizedDescription }
+    }
+
+    private func parsedValue(_ text: String, for column: ColumnInfo) throws -> DBValue {
+        if text.uppercased() == "NULL" { if column.isNullable { return .null }; throw DataEditingError.invalidValue(column: column.name, expectedType: column.type) }
+        let type = column.type.lowercased()
+        if type.contains("int") { guard let value = Int64(text) else { throw DataEditingError.invalidValue(column: column.name, expectedType: column.type) }; return .integer(value) }
+        if type.contains("real") || type.contains("double") || type.contains("float") || type.contains("numeric") || type.contains("decimal") { guard let value = Double(text), value.isFinite else { throw DataEditingError.invalidValue(column: column.name, expectedType: column.type) }; return .double(value) }
+        if type.contains("bool") { guard ["true", "false", "0", "1"].contains(text.lowercased()) else { throw DataEditingError.invalidValue(column: column.name, expectedType: column.type) } }
+        if type.contains("blob") || type.contains("bytea") || type.contains("binary") { throw DataEditingError.invalidValue(column: column.name, expectedType: "hex blob") }
+        return .text(text)
     }
 
     func refresh() async {
@@ -723,6 +800,7 @@ final class AppModel {
         filterColumn = ""
         filterOperator = .equals
         filterValue = ""
+        discardPendingChanges()
     }
 
     private func persistProfile(_ profile: ConnectionProfile) throws {

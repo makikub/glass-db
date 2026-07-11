@@ -122,7 +122,8 @@ actor MySQLDriver: DatabaseDriver {
         let connection = try requireConnection()
         do {
             _ = try await connection.simpleQuery(sql).get()
-            return 0
+            let countRows = try await connection.simpleQuery("SELECT ROW_COUNT() AS affected_rows").get()
+            return countRows.first?.column("affected_rows")?.int.map { Int($0) } ?? 0
         } catch {
             throw DatabaseError.queryFailed("MySQL statement failed: \(error)")
         }
@@ -142,6 +143,18 @@ actor MySQLDriver: DatabaseDriver {
 
     nonisolated func quoteIdentifier(_ identifier: String) -> String {
         "`\(identifier.replacingOccurrences(of: "`", with: "``"))`"
+    }
+
+    nonisolated func mutationLiteral(_ value: DBValue) -> String {
+        if case .text(let text) = value { return "'\(text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "''"))'" }
+        if case .unknown(let text) = value { return "'\(text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "''"))'" }
+        switch value {
+        case .null: return "NULL"
+        case .integer(let value): return String(value)
+        case .double(let value): return String(value)
+        case .blob(let data): return "X'\(data.map { String(format: "%02x", $0) }.joined())'"
+        case .text, .unknown: fatalError()
+        }
     }
 
     private func requireConnection() throws -> MySQLConnection {
