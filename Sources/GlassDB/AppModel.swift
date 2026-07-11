@@ -70,7 +70,7 @@ final class AppModel {
     private var activeConnectionConfig: ConnectionConfig?
     private var queryGeneration = 0
     private var activeQueryTask: Task<Void, Never>?
-    private var queryTimeoutTask: Task<Void, Never>?
+    private var queryTimeoutWorkItem: DispatchWorkItem?
     private var queryTeardownTask: Task<Void, Never>?
     private let profileStore: any ConnectionProfilePersisting
     private let passwordStore: any ConnectionPasswordStoring
@@ -545,11 +545,11 @@ final class AppModel {
 
     private func disconnectCurrentSession() async {
         queryGeneration += 1
-        queryTimeoutTask?.cancel()
+        queryTimeoutWorkItem?.cancel()
         activeQueryTask?.cancel()
         if let queryTeardownTask { await queryTeardownTask.value }
         if let activeQueryTask { await activeQueryTask.value }
-        self.queryTimeoutTask = nil
+        self.queryTimeoutWorkItem = nil
         self.activeQueryTask = nil
         queryTeardownTask = nil
         if let session { await session.disconnect() }
@@ -815,11 +815,13 @@ final class AppModel {
                 self?.finishSQL(error: error, generation: generation, session: session)
             }
         }
-        queryTimeoutTask = Task { [weak self] in
-            do { try await Task.sleep(for: .seconds(timeoutSeconds)) }
-            catch { return }
-            self?.timeoutSQL(generation: generation, session: session, timeoutSeconds: timeoutSeconds)
+        let timeoutWorkItem = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                self?.timeoutSQL(generation: generation, session: session, timeoutSeconds: timeoutSeconds)
+            }
         }
+        queryTimeoutWorkItem = timeoutWorkItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(timeoutSeconds), execute: timeoutWorkItem)
     }
 
     func cancelQuery() async {
@@ -861,8 +863,8 @@ final class AppModel {
 
     private func finishSQL(_ outcome: SQLExecutionOutcome, sql: String, generation: Int) {
         guard generation == queryGeneration else { return }
-        queryTimeoutTask?.cancel()
-        queryTimeoutTask = nil
+        queryTimeoutWorkItem?.cancel()
+        queryTimeoutWorkItem = nil
         switch outcome {
         case .result(let result):
             resultSet = result
@@ -880,8 +882,8 @@ final class AppModel {
 
     private func finishSQL(error: Error, generation: Int, session: ConnectionSession) {
         guard generation == queryGeneration else { return }
-        queryTimeoutTask?.cancel()
-        queryTimeoutTask = nil
+        queryTimeoutWorkItem?.cancel()
+        queryTimeoutWorkItem = nil
         let classified = classifyQueryError(error)
         errorMessage = classified.localizedDescription
         isLoading = false
@@ -907,8 +909,8 @@ final class AppModel {
     }
 
     private func beginQueryTeardown(session: ConnectionSession) {
-        queryTimeoutTask?.cancel()
-        queryTimeoutTask = nil
+        queryTimeoutWorkItem?.cancel()
+        queryTimeoutWorkItem = nil
         activeQueryTask?.cancel()
         if queryTeardownTask == nil {
             queryTeardownTask = Task { await session.cancelCurrentQuery() }
