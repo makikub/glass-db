@@ -1,0 +1,32 @@
+# GitHub CLI reads need macOS Keychain access, which is unavailable in the sandbox.
+prefix_rule(
+    pattern = ["gh", "auth", "status"],
+    decision = "allow",
+    justification = "Read the existing GitHub credential status outside the sandbox without changing credentials.",
+    match = ["gh auth status", "gh auth status --hostname github.com"],
+    not_match = ["gh auth login", "gh auth logout"],
+)
+
+prefix_rule(
+    pattern = ["gh", "pr", ["view", "list", "status", "checks", "diff"]],
+    decision = "allow",
+    justification = "Inspect GlassDB pull requests outside the sandbox using the existing Keychain credential.",
+    match = ["gh pr view 16", "gh pr checks 16", "gh pr list --repo makikub/glass-db"],
+    not_match = ["gh pr create", "gh pr merge 16", "gh pr close 16"],
+)
+
+prefix_rule(
+    pattern = ["gh", "issue", ["view", "list", "status"]],
+    decision = "allow",
+    justification = "Inspect GlassDB issues outside the sandbox using the existing Keychain credential.",
+    match = ["gh issue view 5", "gh issue list --repo makikub/glass-db"],
+    not_match = ["gh issue create", "gh issue close 5", "gh issue delete 5"],
+)
+
+prefix_rule(
+    pattern = ["gh", "run", ["view", "list", "watch"]],
+    decision = "allow",
+    justification = "Inspect GlassDB Actions and Pages runs outside the sandbox using the existing Keychain credential.",
+    match = ["gh run view 29166788542", "gh run list --repo makikub/glass-db"],
+    not_match = ["gh run cancel 29166788542", "gh run delete 29166788542"],
+)

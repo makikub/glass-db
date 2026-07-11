@@ -1,0 +1,4 @@
+interface:
+  display_name: "GlassDB Issue Batch"
+  short_description: "Manage GlassDB issue work and batched releases safely."
+  default_prompt: "Use $glassdb-issue-batch to coordinate one GlassDB issue task and batch its release."
