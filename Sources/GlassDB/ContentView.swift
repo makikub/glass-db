@@ -206,7 +206,14 @@ struct DatabaseView: View {
 
         NavigationSplitView {
             SidebarView()
-                .navigationSplitViewColumnWidth(min: 260, ideal: 300, max: 380)
+                .navigationSplitViewColumnWidth(min: 260, ideal: model.windowState.sidebarWidth, max: 380)
+                .background {
+                    GeometryReader { proxy in
+                        Color.clear.onChange(of: proxy.size.width, initial: true) { _, width in
+                            model.windowState.updateSidebarWidth(width)
+                        }
+                    }
+                }
         } detail: {
             VStack(spacing: 0) {
                 WorkspaceHeaderView()
@@ -234,7 +241,14 @@ struct DatabaseView: View {
         }
         .inspector(isPresented: .constant(true)) {
             InspectorView()
-                .inspectorColumnWidth(min: 260, ideal: 320)
+                .inspectorColumnWidth(min: 260, ideal: model.windowState.inspectorWidth, max: 480)
+                .background {
+                    GeometryReader { proxy in
+                        Color.clear.onChange(of: proxy.size.width, initial: true) { _, width in
+                            model.windowState.updateInspectorWidth(width)
+                        }
+                    }
+                }
         }
         .toolbar {
             ToolbarItemGroup {
@@ -258,6 +272,7 @@ struct DatabaseView: View {
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
+                .disabled(!model.canRefresh)
                 .help("Refresh tables")
 
                 if model.isLoading {
@@ -552,6 +567,7 @@ struct EditableValueCell: View {
 
 struct TableControlsView: View {
     @Environment(AppModel.self) private var model
+    @FocusState private var isFilterFocused: Bool
 
     var body: some View {
         @Bindable var model = model
@@ -579,6 +595,7 @@ struct TableControlsView: View {
                     .frame(width: 220)
                     .controlSize(.large)
                     .disabled(!model.filterOperator.needsValue)
+                    .focused($isFilterFocused)
 
                 Button {
                     Task { await model.applyFilter() }
@@ -613,6 +630,10 @@ struct TableControlsView: View {
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.regularMaterial)
+        .onChange(of: model.filterFocusRequest) { _, _ in
+            guard model.canFocusTableFilter else { return }
+            isFilterFocused = true
+        }
     }
 }
 
@@ -737,7 +758,7 @@ struct SQLWorkspaceView: View {
 
                     if model.queryExecutionState == .running {
                         ProgressView().controlSize(.small)
-                        Text("Running (30 s timeout)").foregroundStyle(.secondary)
+                        Text("Running (\(model.queryTimeoutSeconds) s timeout)").foregroundStyle(.secondary)
                     }
 
                     Spacer()
