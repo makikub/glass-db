@@ -22,7 +22,7 @@ struct ContentView: View {
             allowsMultipleSelection: false
         ) { result in
             guard case .success(let urls) = result, let url = urls.first else { return }
-            Task { await model.openSQLite(path: url.path) }
+            Task { await model.openSQLite(url: url) }
         }
         .alert("Database Error", isPresented: Binding(
             get: { model.errorMessage != nil },
