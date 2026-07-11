@@ -41,7 +41,7 @@ final class AppModel {
     var errorMessage: String?
     var infoMessage: String?
     var page = 0
-    var pageSize = 200
+    var pageSize: Int { preferences.pageSize }
     var totalRows: Int?
     var workspaceMode: WorkspaceMode = .table
     var sortState: SortState?
@@ -51,13 +51,17 @@ final class AppModel {
     var sqlText = "SELECT name, type FROM sqlite_master ORDER BY type, name"
     var sqlStatusMessage = ""
     var sqlHistory: [String] = []
-    var autoLimitSelects = true
+    var autoLimitSelects: Bool {
+        get { preferences.autoLimitSelects }
+        set { preferences.autoLimitSelects = newValue }
+    }
     var connectionProfiles: [ConnectionProfile] = []
     var pendingChanges: [PendingChange] = []
     var mutationSQLPreview = ""
     var isApplyingMutations = false
     var queryExecutionState: QueryExecutionState = .idle
-    let queryTimeoutSeconds: Int
+    var queryTimeoutSeconds: Int { queryTimeoutOverride ?? preferences.queryTimeoutSeconds }
+    var filterFocusRequest = 0
 
     private var session: ConnectionSession?
     private var activeSecurityScopedResource: SQLiteSecurityScopedResource?
@@ -72,18 +76,25 @@ final class AppModel {
     private let passwordStore: any ConnectionPasswordStoring
     private let sqliteBookmarkAccess: any SQLiteBookmarkAccessing
     private let driverProvider: any DatabaseDriverProviding
+    let preferences: AppPreferences
+    let windowState: WindowState
+    private let queryTimeoutOverride: Int?
 
     init(
         profileStore: (any ConnectionProfilePersisting)? = nil,
         passwordStore: any ConnectionPasswordStoring = KeychainPasswordStore(),
         sqliteBookmarkAccess: any SQLiteBookmarkAccessing = SQLiteBookmark(),
         driverProvider: any DatabaseDriverProviding = DefaultDatabaseDriverProvider(),
-        queryTimeoutSeconds: Int = 30
+        queryTimeoutSeconds: Int? = nil,
+        preferences: AppPreferences? = nil,
+        windowState: WindowState? = nil
     ) {
         self.passwordStore = passwordStore
         self.sqliteBookmarkAccess = sqliteBookmarkAccess
         self.driverProvider = driverProvider
-        self.queryTimeoutSeconds = queryTimeoutSeconds
+        self.preferences = preferences ?? AppPreferences()
+        self.windowState = windowState ?? WindowState(windowID: UUID().uuidString)
+        self.queryTimeoutOverride = queryTimeoutSeconds
         if let profileStore {
             self.profileStore = profileStore
         } else {
@@ -155,6 +166,21 @@ final class AppModel {
         serverKind == .mysql ? canConnectMySQL : canConnectPostgreSQL
     }
 
+    var canOpenSQLWorkspace: Bool { screen == .database }
+    var canRefresh: Bool {
+        session != nil && queryExecutionState == .idle && !isApplyingMutations && pendingChanges.isEmpty
+    }
+    var canApplyPendingChanges: Bool {
+        session != nil && workspaceMode == .table && selectedTable != nil
+            && !pendingChanges.isEmpty && !isApplyingMutations && queryExecutionState == .idle
+    }
+    var canFocusTableFilter: Bool { screen == .database && workspaceMode == .table && selectedTable != nil }
+
+    func requestTableFilterFocus() {
+        guard canFocusTableFilter else { return }
+        filterFocusRequest += 1
+    }
+
     func openSQLite(path: String) async {
         isLoading = true
         errorMessage = nil
@@ -179,6 +205,7 @@ final class AppModel {
             selectedSchema = loadedSchema
             tables = loadedTables
             screen = .database
+            await restoreWorkspaceSelection()
         } catch {
             await session.disconnect()
             errorMessage = error.localizedDescription
@@ -247,6 +274,7 @@ final class AppModel {
             tables = loadedTables
             sqlText = "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = \(quoteLiteral(database)) ORDER BY table_type, table_name"
             screen = .database
+            await restoreWorkspaceSelection()
         } catch {
             await session.disconnect()
             errorMessage = error.localizedDescription
@@ -291,6 +319,7 @@ final class AppModel {
             tables = loadedTables
             sqlText = "SELECT table_schema, table_name, table_type FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_type, table_name"
             screen = .database
+            await restoreWorkspaceSelection()
         } catch {
             await session.disconnect()
             errorMessage = error.localizedDescription
@@ -496,6 +525,7 @@ final class AppModel {
             selectedSchema = loadedSchema
             tables = loadedTables
             screen = .database
+            await restoreWorkspaceSelection()
         } catch {
             if let pendingSession { await pendingSession.disconnect() }
             resource?.endAccess()
@@ -577,6 +607,9 @@ final class AppModel {
         filterValue = ""
         totalRows = nil
         discardPendingChanges()
+        windowState.connectionKey = currentConnectionKey
+        windowState.schemaName = table.schema
+        windowState.tableName = table.name
         do {
             let tableColumns = try await session.columns(of: TableRef(schema: table.schema, name: table.name))
             self.tableColumns = tableColumns
@@ -625,7 +658,7 @@ final class AppModel {
     func discardPendingChanges() { pendingChanges = []; mutationSQLPreview = "" }
 
     func applyPendingChanges() async {
-        guard let session, let table = selectedTable, !pendingChanges.isEmpty, !isApplyingMutations else { return }
+        guard let session, let table = selectedTable, canApplyPendingChanges else { return }
         isApplyingMutations = true
         defer { isApplyingMutations = false }
         do {
@@ -652,7 +685,7 @@ final class AppModel {
     }
 
     func refresh() async {
-        guard let session else { return }
+        guard let session, canRefresh else { return }
         do {
             tables = try await session.tables(in: selectedSchema?.name ?? schemas.first?.name ?? "main")
             if isTableMode {
@@ -666,6 +699,8 @@ final class AppModel {
     func selectSchema(_ schema: SchemaInfo) async {
         guard let session else { return }
         selectedSchema = schema
+        windowState.schemaName = schema.name
+        windowState.tableName = nil
         resetTableSelection()
         do {
             tables = try await session.tables(in: schema.name)
@@ -764,6 +799,7 @@ final class AppModel {
         workspaceMode = .sql
         let resultProducing = isResultProducingSQL(sql)
         let limit = autoLimitSelects ? 1000 : nil
+        let timeoutSeconds = queryTimeoutSeconds
         let schema = selectedSchema?.name ?? schemas.first?.name ?? "main"
         activeQueryTask = Task { [weak self] in
             do {
@@ -780,9 +816,9 @@ final class AppModel {
             }
         }
         queryTimeoutTask = Task { [weak self] in
-            do { try await Task.sleep(for: .seconds(self?.queryTimeoutSeconds ?? 30)) }
+            do { try await Task.sleep(for: .seconds(timeoutSeconds)) }
             catch { return }
-            self?.timeoutSQL(generation: generation, session: session)
+            self?.timeoutSQL(generation: generation, session: session, timeoutSeconds: timeoutSeconds)
         }
     }
 
@@ -861,10 +897,10 @@ final class AppModel {
         }
     }
 
-    private func timeoutSQL(generation: Int, session: ConnectionSession) {
+    private func timeoutSQL(generation: Int, session: ConnectionSession, timeoutSeconds: Int) {
         guard generation == queryGeneration, queryExecutionState == .running else { return }
         queryGeneration += 1
-        errorMessage = DatabaseError.queryTimedOut(seconds: queryTimeoutSeconds).localizedDescription
+        errorMessage = DatabaseError.queryTimedOut(seconds: timeoutSeconds).localizedDescription
         queryExecutionState = .disconnected
         isLoading = false
         beginQueryTeardown(session: session)
@@ -979,6 +1015,29 @@ final class AppModel {
         selectedSchema = nil
         resetTableSelection()
         sqlStatusMessage = ""
+    }
+
+    private func restoreWorkspaceSelection() async {
+        guard windowState.connectionKey == currentConnectionKey,
+              let schemaName = windowState.schemaName,
+              let schema = schemas.first(where: { $0.name == schemaName }) else { return }
+        if selectedSchema != schema {
+            selectedSchema = schema
+            do { tables = try await session?.tables(in: schema.name) ?? [] }
+            catch { errorMessage = error.localizedDescription; return }
+        }
+        guard let tableName = windowState.tableName,
+              let table = tables.first(where: { $0.name == tableName && $0.schema == schema.name }) else { return }
+        await select(table)
+    }
+
+    private var currentConnectionKey: String? {
+        guard let config = activeConnectionConfig else { return nil }
+        switch config.kind {
+        case .sqlite: return "sqlite:\(config.filePath ?? databasePath)"
+        case .mysql, .postgresql:
+            return "\(config.kind.rawValue):\(config.host ?? ""):\(config.port ?? 0):\(config.database ?? "")"
+        }
     }
 
     private func resetTableSelection() {
