@@ -42,6 +42,7 @@ struct DatabaseIntegrationTests {
 
         let count = try await session.rowCount(in: table, filter: nil)
         #expect(count == 3)
+        try await assertProductionMutations(using: driver, schema: "main")
     }
 
     @Test(
@@ -87,6 +88,7 @@ struct DatabaseIntegrationTests {
                 Task { await productionMySQLDriver.disconnect() }
             }
             try await assertProjectsFixture(using: productionMySQLDriver, schema: "glassdb")
+            try await assertProductionMutations(using: productionMySQLDriver, schema: "glassdb")
         }
     }
 
@@ -175,11 +177,7 @@ struct DatabaseIntegrationTests {
             let explicitlyLimited = try await driver.query("SELECT id\nFROM public.projects\nLIMIT 2", limit: 1000)
             #expect(explicitlyLimited.rows.map { $0.values["id"] } == [.integer(1), .integer(2)])
 
-            let session = ConnectionSession(driver: driver)
-            let columns = try await session.columns(of: TableRef(schema: "public", name: "projects"))
-            try await session.applyMutations([.update(id: UUID(), originalKey: ["id": .integer(1)], values: ["status": .text("edited")])], table: TableRef(schema: "public", name: "projects"), columns: columns)
-            let edited = try await driver.query("SELECT status FROM public.projects WHERE id = 1", limit: nil)
-            #expect(edited.rows.first?.values["status"] == .text("edited"))
+            try await assertProductionMutations(using: driver, schema: "public")
         }
     }
 
@@ -241,6 +239,39 @@ struct DatabaseIntegrationTests {
 
         let count = try await session.rowCount(in: table, filter: nil)
         #expect(count == 3)
+    }
+
+    private func assertProductionMutations(using driver: some DatabaseDriver, schema: String) async throws {
+        let session = ConnectionSession(driver: driver)
+        let table = TableRef(schema: schema, name: "projects")
+        let columns = try await session.columns(of: table)
+        let qualified = "\(driver.quoteIdentifier(schema)).\(driver.quoteIdentifier("projects"))"
+
+        try await session.applyMutations([
+            .update(id: UUID(), originalKey: ["id": .integer(1)], values: ["name": .text("Safe ' edit"), "owner": .null]),
+            .insert(id: UUID(), values: ["id": .integer(99), "name": .text("Inserted"), "status": .text("active"), "owner": .text("Codex"), "updated_at": .text("2026-07-11")]),
+        ], table: table, columns: columns)
+        let applied = try await driver.query("SELECT name, owner FROM \(qualified) WHERE id = 1", limit: nil)
+        #expect(applied.rows.first?.values["name"] == .text("Safe ' edit"))
+        #expect(applied.rows.first?.values["owner"] == .null)
+        let inserted = try await driver.query("SELECT name FROM \(qualified) WHERE id = 99", limit: nil)
+        #expect(inserted.rows.first?.values["name"] == .text("Inserted"))
+
+        try await session.applyMutations([.delete(id: UUID(), originalKey: ["id": .integer(99)])], table: table, columns: columns)
+        let deleted = try await driver.query("SELECT COUNT(*) AS count FROM \(qualified) WHERE id = 99", limit: nil)
+        #expect(deleted.rows.first?.values["count"] == .integer(0))
+
+        do {
+            try await session.applyMutations([
+                .update(id: UUID(), originalKey: ["id": .integer(1)], values: ["status": .text("must_rollback")]),
+                .delete(id: UUID(), originalKey: ["id": .integer(404)]),
+            ], table: table, columns: columns)
+            Issue.record("Expected affected-row mismatch")
+        } catch {
+            #expect(error.localizedDescription.contains("affectedRows") || error.localizedDescription.contains("Expected 1 affected row"))
+        }
+        let rolledBack = try await driver.query("SELECT status FROM \(qualified) WHERE id = 1", limit: nil)
+        #expect(rolledBack.rows.first?.values["status"] == .text("active"))
     }
 }
 
