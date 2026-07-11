@@ -145,6 +145,35 @@ struct ConnectionProfileTests {
     }
 
     @Test @MainActor
+    func cancelledSavedSQLiteQueryReleasesAndReacquiresSecurityScopeExactlyOnce() async throws {
+        let url = try makeSQLiteDatabase()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let profile = ConnectionProfile(name: "Cancelable SQLite", kind: .sqlite, filePath: url.path, sqliteBookmark: Data("bookmark".utf8))
+        let events = LockedEvents()
+        let bookmarkAccess = TestSQLiteBookmarkAccess(url: url, events: events)
+        let driver = LifecycleTestDriver(events: events, slowQueries: true)
+        let model = AppModel(
+            profileStore: TestProfileStore(profiles: [profile]),
+            passwordStore: TestPasswordStore(),
+            sqliteBookmarkAccess: bookmarkAccess,
+            driverProvider: TestDriverProvider(driver: driver)
+        )
+
+        await model.connectProfile(profile)
+        model.sqlText = "SELECT slow"
+        await model.runSQL()
+        try await Task.sleep(for: .milliseconds(25))
+        await model.cancelQuery()
+        #expect(bookmarkAccess.stoppedURLs.isEmpty)
+
+        await model.reconnect()
+
+        #expect(bookmarkAccess.startedURLs == [url, url])
+        #expect(bookmarkAccess.stoppedURLs == [url])
+        #expect(events.values.filter { $0 == "disconnect" }.count == 1)
+    }
+
+    @Test @MainActor
     func staleSQLiteBookmarkIsRegeneratedAndPersisted() async throws {
         let originalURL = FileManager.default.temporaryDirectory.appending(path: "Moved-\(UUID().uuidString).sqlite")
         let resolvedURL = try makeSQLiteDatabase()
@@ -475,11 +504,13 @@ private actor LifecycleTestDriver: DatabaseDriver {
     let events: LockedEvents
     let failConnect: Bool
     let failSchemas: Bool
+    let slowQueries: Bool
 
-    init(events: LockedEvents, failConnect: Bool = false, failSchemas: Bool = false) {
+    init(events: LockedEvents, failConnect: Bool = false, failSchemas: Bool = false, slowQueries: Bool = false) {
         self.events = events
         self.failConnect = failConnect
         self.failSchemas = failSchemas
+        self.slowQueries = slowQueries
     }
 
     func connect(config: ConnectionConfig) async throws {
@@ -495,7 +526,10 @@ private actor LifecycleTestDriver: DatabaseDriver {
 
     func tables(in schema: String) async throws -> [TableInfo] { [] }
     func columns(of table: TableRef) async throws -> [ColumnInfo] { [] }
-    func query(_ sql: String, limit: Int?) async throws -> ResultSet { ResultSet(columns: [], rows: []) }
+    func query(_ sql: String, limit: Int?) async throws -> ResultSet {
+        if slowQueries { try await Task.sleep(for: .seconds(60)) }
+        return ResultSet(columns: [], rows: [])
+    }
     func execute(_ sql: String) async throws -> Int { 0 }
 
     func disconnect() async {

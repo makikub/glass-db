@@ -11,6 +11,32 @@ enforced as read-only:
 - view rows in a read-only grid
 - sort, filter, page, count rows, and copy values
 - run ad hoc SQL and inspect result sets
+- cancel a running SQL query, apply a default 30-second timeout, and reconnect
+  with the same saved or current connection settings after interruption
+
+## Query cancellation and timeout behavior
+
+GlassDB treats cancellation, timeout, connection loss, and database query errors
+as separate recoverable outcomes. Cancellation and timeout invalidate the current
+`ConnectionSession`; use the **Reconnect** button before running another query.
+This prevents a late driver completion from updating newer UI state.
+
+- **SQLite:** `sqlite3_progress_handler` interrupts CPU-bound statements. The
+  handle is retained until reconnect replaces the session, at which point any
+  security-scoped file access is ended and reacquired. Native calls that do not
+  invoke SQLite's progress callback cannot be interrupted immediately.
+- **MySQL:** MySQLNIO does not expose a portable per-query cancel operation in
+  the API used here. GlassDB closes the connection and event-loop group; the
+  server may continue work briefly until it observes the closed socket.
+- **PostgreSQL:** PostgresNIO's pooled client does not expose the backend cancel
+  key through this abstraction. GlassDB cancels the client run task and discards
+  the client. Reconnect creates a fresh single-connection client. The pool can
+  transparently replace a terminated backend connection; during a full server
+  outage it may keep retrying until GlassDB's timeout wins, so that outcome is
+  reported as a timeout rather than a direct connection-loss error.
+
+The 30-second limit applies to SQL workspace query and execute operations. It
+does not currently cover metadata loading, table paging, or mutation batches.
 
 ## Development
 

@@ -45,6 +45,42 @@ struct DatabaseIntegrationTests {
         try await assertProductionMutations(using: driver, schema: "main")
     }
 
+    @Test
+    func sqliteLongQueryCanBeCancelledAndReconnected() async throws {
+        let path = FileManager.default.temporaryDirectory.appending(path: "GlassDBCancel-\(UUID()).sqlite").path
+        let driver = SQLiteDriver()
+        let config = ConnectionConfig(name: "SQLite cancellation", kind: .sqlite, filePath: path)
+        try await driver.connect(config: config)
+        let task = Task {
+            try await driver.query("WITH RECURSIVE counter(x) AS (VALUES(0) UNION ALL SELECT x + 1 FROM counter WHERE x < 100000000) SELECT sum(x) FROM counter", limit: nil)
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        await driver.cancelCurrentQuery()
+        do {
+            _ = try await task.value
+            Issue.record("Expected SQLite query cancellation")
+        } catch {
+            #expect(error.localizedDescription.localizedCaseInsensitiveContains("cancel"))
+        }
+        await driver.disconnect()
+        try await driver.connect(config: config)
+        let result = try await driver.query("SELECT 1 AS recovered", limit: nil)
+        #expect(result.rows.first?.values["recovered"] == .integer(1))
+        let executeTask = Task {
+            try await driver.execute("CREATE TABLE numbers(value INTEGER); WITH RECURSIVE counter(x) AS (VALUES(0) UNION ALL SELECT x + 1 FROM counter WHERE x < 100000000) INSERT INTO numbers SELECT x FROM counter")
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        await driver.cancelCurrentQuery()
+        do {
+            _ = try await executeTask.value
+            Issue.record("Expected SQLite execute cancellation")
+        } catch {
+            #expect(error.localizedDescription.localizedCaseInsensitiveContains("cancel"))
+        }
+        await driver.disconnect()
+        try? FileManager.default.removeItem(atPath: path)
+    }
+
     @Test(
         "Docker MySQL fixture driver answers queries",
         .enabled(if: databaseIntegrationEnabled, "Set GLASSDB_INTEGRATION_DATABASES=1 to run Docker-backed database tests.")
@@ -89,6 +125,16 @@ struct DatabaseIntegrationTests {
             }
             try await assertProjectsFixture(using: productionMySQLDriver, schema: "glassdb")
             try await assertProductionMutations(using: productionMySQLDriver, schema: "glassdb")
+            try await assertServerCancellationAndReconnect(
+                driver: productionMySQLDriver,
+                config: ConnectionConfig(name: "MySQL fixture", kind: .mysql, host: "127.0.0.1", port: 33076, database: "glassdb", user: "glassdb", password: "glassdb"),
+                longQuery: "SELECT SLEEP(60) AS slept"
+            )
+            let connectionID = try #require((try await productionMySQLDriver.query("SELECT CONNECTION_ID() AS id", limit: nil)).rows.first?.values["id"]?.description)
+            _ = try docker.exec(service: "mysql", arguments: ["mysql", "-uroot", "-pglassdb-root", "--execute", "KILL \(connectionID)"])
+            try await assertForcedLoss(productionMySQLDriver, expectation: .connectionLost)
+            try await productionMySQLDriver.connect(config: ConnectionConfig(name: "MySQL fixture", kind: .mysql, host: "127.0.0.1", port: 33076, database: "glassdb", user: "glassdb", password: "glassdb"))
+            #expect((try await productionMySQLDriver.query("SELECT 1 AS recovered", limit: nil)).rows.first?.values["recovered"] == .integer(1))
         }
     }
 
@@ -178,7 +224,73 @@ struct DatabaseIntegrationTests {
             #expect(explicitlyLimited.rows.map { $0.values["id"] } == [.integer(1), .integer(2)])
 
             try await assertProductionMutations(using: driver, schema: "public")
+            try await assertServerCancellationAndReconnect(
+                driver: driver,
+                config: ConnectionConfig(name: "PostgreSQL fixture", kind: .postgresql, host: "127.0.0.1", port: 54376, database: "glassdb", user: "glassdb", password: "glassdb"),
+                longQuery: "SELECT pg_sleep(60)"
+            )
+            try docker.stop(service: "postgres")
+            try await assertForcedLoss(driver, expectation: .timeoutWhilePoolRetries)
+            try docker.start(service: "postgres")
+            await driver.disconnect()
+            try await driver.connect(config: ConnectionConfig(name: "PostgreSQL fixture", kind: .postgresql, host: "127.0.0.1", port: 54376, database: "glassdb", user: "glassdb", password: "glassdb"))
+            #expect((try await driver.query("SELECT 1 AS recovered", limit: nil)).rows.first?.values["recovered"] == .integer(1))
         }
+    }
+
+    private enum ForcedLossExpectation { case connectionLost, timeoutWhilePoolRetries }
+
+    private func assertForcedLoss(_ driver: some DatabaseDriver, expectation: ForcedLossExpectation) async throws {
+        do {
+            _ = try await withThrowingTaskGroup(of: ResultSet.self) { group in
+                group.addTask { try await driver.query("SELECT 1 AS should_fail", limit: nil) }
+                group.addTask {
+                    try await Task.sleep(for: .seconds(1))
+                    await driver.cancelCurrentQuery()
+                    throw DatabaseError.queryTimedOut(seconds: 1)
+                }
+                let result = try await group.next()!
+                group.cancelAll()
+                return result
+            }
+            Issue.record("Expected forced connection loss")
+        } catch let error as DatabaseError {
+            switch (expectation, error) {
+            case (.connectionLost, .connectionLost(let detail)):
+                #expect(detail.localizedCaseInsensitiveContains("MySQL"))
+                #expect(detail.localizedCaseInsensitiveContains("closed"))
+            case (.timeoutWhilePoolRetries, .queryTimedOut(seconds: 1)):
+                break
+            case (.timeoutWhilePoolRetries, .connectionLost(let detail)):
+                #expect(detail.localizedCaseInsensitiveContains("PostgreSQL"))
+                #expect(detail.localizedCaseInsensitiveContains("poolShutdown"))
+            default:
+                Issue.record("Unexpected forced-loss category: \(error.localizedDescription)")
+            }
+        } catch {
+            Issue.record("Unexpected unclassified forced-loss error: \(error)")
+        }
+    }
+
+    private func assertServerCancellationAndReconnect(
+        driver: some DatabaseDriver,
+        config: ConnectionConfig,
+        longQuery: String
+    ) async throws {
+        let task = Task { try await driver.query(longQuery, limit: nil) }
+        try await Task.sleep(for: .milliseconds(200))
+        let cancellationStarted = ContinuousClock.now
+        await driver.cancelCurrentQuery()
+        do {
+            _ = try await task.value
+            Issue.record("Expected long-running server query cancellation")
+        } catch {
+            #expect(!error.localizedDescription.isEmpty)
+        }
+        #expect(cancellationStarted.duration(to: .now) < .seconds(2))
+        try await driver.connect(config: config)
+        let recovered = try await driver.query("SELECT 1 AS recovered", limit: nil)
+        #expect(recovered.rows.first?.values["recovered"] == .integer(1))
     }
 
     private func withDockerFixture(
@@ -516,6 +628,14 @@ private struct DockerCompose {
             arguments.append("-v")
         }
         _ = try runDockerCompose(arguments: arguments)
+    }
+
+    func stop(service: String) throws {
+        _ = try runDockerCompose(arguments: ["stop", service])
+    }
+
+    func start(service: String) throws {
+        _ = try runDockerCompose(arguments: ["start", "--wait", service])
     }
 
     func exec(service: String, arguments: [String]) throws -> CommandOutput {

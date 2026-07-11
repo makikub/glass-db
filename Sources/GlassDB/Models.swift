@@ -107,6 +107,15 @@ enum WorkspaceMode: String, CaseIterable, Identifiable, Sendable {
     var id: String { rawValue }
 }
 
+enum QueryExecutionState: Sendable, Equatable {
+    case idle
+    case running
+    case cancelling
+    case disconnected
+
+    var isRunning: Bool { self == .running || self == .cancelling }
+}
+
 enum SortDirection: String, CaseIterable, Identifiable, Sendable {
     case ascending = "ASC"
     case descending = "DESC"
@@ -226,11 +235,15 @@ protocol DatabaseDriver: Sendable {
     func execute(_ sql: String) async throws -> Int
     func applyMutations(_ statements: [MutationStatement]) async throws
     func disconnect() async
+    func cancelCurrentQuery() async
+    var cancellationClosesConnection: Bool { get }
     func quoteIdentifier(_ identifier: String) -> String
     func mutationLiteral(_ value: DBValue) -> String
 }
 
 extension DatabaseDriver {
+    func cancelCurrentQuery() async {}
+    var cancellationClosesConnection: Bool { false }
     func quoteIdentifier(_ identifier: String) -> String {
         "\"\(identifier.replacingOccurrences(of: "\"", with: "\"\""))\""
     }
@@ -290,6 +303,9 @@ enum DatabaseError: LocalizedError, Sendable {
     case queryFailed(String)
     case readOnlyViolation
     case notConnected
+    case queryCancelled
+    case queryTimedOut(seconds: Int)
+    case connectionLost(String)
 
     var errorDescription: String? {
         switch self {
@@ -305,6 +321,28 @@ enum DatabaseError: LocalizedError, Sendable {
             return "This PostgreSQL connection is read-only. Only SELECT queries are allowed."
         case .notConnected:
             return "Database is not connected."
+        case .queryCancelled:
+            return "Query cancelled. Reconnect before running another query."
+        case .queryTimedOut(let seconds):
+            return "Query timed out after \(seconds) seconds. Reconnect before running another query."
+        case .connectionLost(let message):
+            return "Database connection was lost. \(message)"
         }
     }
+}
+
+func classifiedDriverQueryError(driver: String, error: Error) -> DatabaseError {
+    if let databaseError = error as? DatabaseError { return databaseError }
+    let detail = String(describing: error)
+    let lower = detail.lowercased()
+    let connectionPhrases = [
+        "connection reset", "broken pipe", "connection closed", "unexpected eof",
+        "not connected", "connection refused", "server closed", "channel inactive",
+        "io on closed channel", "ioonclosedchannel", "eof while reading",
+        "poolshutdown", "pool shutdown",
+    ]
+    if connectionPhrases.contains(where: lower.contains) {
+        return .connectionLost("\(driver) query failed: \(detail)")
+    }
+    return .queryFailed("\(driver) query failed: \(detail)")
 }

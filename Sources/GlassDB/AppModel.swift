@@ -2,6 +2,11 @@ import Foundation
 import AppKit
 import Observation
 
+private enum SQLExecutionOutcome: Sendable {
+    case result(ResultSet)
+    case changed(Int, [TableInfo])
+}
+
 @MainActor
 @Observable
 final class AppModel {
@@ -51,9 +56,18 @@ final class AppModel {
     var pendingChanges: [PendingChange] = []
     var mutationSQLPreview = ""
     var isApplyingMutations = false
+    var queryExecutionState: QueryExecutionState = .idle
+    let queryTimeoutSeconds: Int
 
     private var session: ConnectionSession?
     private var activeSecurityScopedResource: SQLiteSecurityScopedResource?
+    private var activeConnectionKind: DatabaseKind?
+    private var activeProfile: ConnectionProfile?
+    private var activeConnectionConfig: ConnectionConfig?
+    private var queryGeneration = 0
+    private var activeQueryTask: Task<Void, Never>?
+    private var queryTimeoutTask: Task<Void, Never>?
+    private var queryTeardownTask: Task<Void, Never>?
     private let profileStore: any ConnectionProfilePersisting
     private let passwordStore: any ConnectionPasswordStoring
     private let sqliteBookmarkAccess: any SQLiteBookmarkAccessing
@@ -63,11 +77,13 @@ final class AppModel {
         profileStore: (any ConnectionProfilePersisting)? = nil,
         passwordStore: any ConnectionPasswordStoring = KeychainPasswordStore(),
         sqliteBookmarkAccess: any SQLiteBookmarkAccessing = SQLiteBookmark(),
-        driverProvider: any DatabaseDriverProviding = DefaultDatabaseDriverProvider()
+        driverProvider: any DatabaseDriverProviding = DefaultDatabaseDriverProvider(),
+        queryTimeoutSeconds: Int = 30
     ) {
         self.passwordStore = passwordStore
         self.sqliteBookmarkAccess = sqliteBookmarkAccess
         self.driverProvider = driverProvider
+        self.queryTimeoutSeconds = queryTimeoutSeconds
         if let profileStore {
             self.profileStore = profileStore
         } else {
@@ -152,12 +168,19 @@ final class AppModel {
         let session = ConnectionSession(driver: driver(for: .sqlite))
         do {
             try await session.connect(config: config)
+            let loadedSchemas = try await session.schemas()
+            let loadedSchema = loadedSchemas.first
+            let loadedTables = try await session.tables(in: loadedSchema?.name ?? "main")
             self.session = session
-            schemas = try await session.schemas()
-            selectedSchema = schemas.first
-            tables = try await session.tables(in: selectedSchema?.name ?? "main")
+            activeConnectionKind = .sqlite
+            activeProfile = nil
+            activeConnectionConfig = config
+            schemas = loadedSchemas
+            selectedSchema = loadedSchema
+            tables = loadedTables
             screen = .database
         } catch {
+            await session.disconnect()
             errorMessage = error.localizedDescription
         }
         isLoading = false
@@ -212,13 +235,20 @@ final class AppModel {
         let session = ConnectionSession(driver: driver(for: .mysql))
         do {
             try await session.connect(config: config)
+            let loadedSchemas = try await session.schemas()
+            let loadedSchema = loadedSchemas.first
+            let loadedTables = try await session.tables(in: loadedSchema?.name ?? database)
             self.session = session
-            schemas = try await session.schemas()
-            selectedSchema = schemas.first
-            tables = try await session.tables(in: selectedSchema?.name ?? database)
+            activeConnectionKind = .mysql
+            activeProfile = nil
+            activeConnectionConfig = config
+            schemas = loadedSchemas
+            selectedSchema = loadedSchema
+            tables = loadedTables
             sqlText = "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = \(quoteLiteral(database)) ORDER BY table_type, table_name"
             screen = .database
         } catch {
+            await session.disconnect()
             errorMessage = error.localizedDescription
         }
         isLoading = false
@@ -249,13 +279,20 @@ final class AppModel {
         let session = ConnectionSession(driver: driver(for: .postgresql))
         do {
             try await session.connect(config: config)
+            let loadedSchemas = try await session.schemas()
+            let loadedSchema = loadedSchemas.first
+            let loadedTables = try await session.tables(in: loadedSchema?.name ?? "public")
             self.session = session
-            schemas = try await session.schemas()
-            selectedSchema = schemas.first
-            tables = try await session.tables(in: selectedSchema?.name ?? "public")
+            activeConnectionKind = .postgresql
+            activeProfile = nil
+            activeConnectionConfig = config
+            schemas = loadedSchemas
+            selectedSchema = loadedSchema
+            tables = loadedTables
             sqlText = "SELECT table_schema, table_name, table_type FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_type, table_name"
             screen = .database
         } catch {
+            await session.disconnect()
             errorMessage = error.localizedDescription
         }
         isLoading = false
@@ -366,6 +403,7 @@ final class AppModel {
         } catch {
             errorMessage = error.localizedDescription
         }
+        if screen == .database { activeProfile = profile }
     }
 
     func testProfile(_ profile: ConnectionProfile) async {
@@ -445,6 +483,9 @@ final class AppModel {
             let loadedTables = try await session.tables(in: loadedSchema?.name ?? "main")
 
             self.session = session
+            activeConnectionKind = .sqlite
+            activeProfile = profile
+            activeConnectionConfig = profile.connectionConfig(sqlitePath: acquiredResource.url.path)
             activeSecurityScopedResource = acquiredResource
             resource = nil
             pendingSession = nil
@@ -473,6 +514,14 @@ final class AppModel {
     }
 
     private func disconnectCurrentSession() async {
+        queryGeneration += 1
+        queryTimeoutTask?.cancel()
+        activeQueryTask?.cancel()
+        if let queryTeardownTask { await queryTeardownTask.value }
+        if let activeQueryTask { await activeQueryTask.value }
+        self.queryTimeoutTask = nil
+        self.activeQueryTask = nil
+        queryTeardownTask = nil
         if let session { await session.disconnect() }
         self.session = nil
         endSQLiteAccess()
@@ -705,26 +754,169 @@ final class AppModel {
         let sql = sqlText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !sql.isEmpty else { return }
 
+        guard !queryExecutionState.isRunning else { return }
+        queryGeneration += 1
+        let generation = queryGeneration
+        queryExecutionState = .running
         isLoading = true
         errorMessage = nil
         selectedCell = nil
         workspaceMode = .sql
-        do {
-            if isResultProducingSQL(sql) {
-                let limit = autoLimitSelects ? 1000 : nil
-                resultSet = try await session.query(sql, limit: limit)
-                sqlStatusMessage = "\(resultSet.rows.count) rows"
-            } else {
-                let changedRows = try await session.execute(sql)
-                resultSet = ResultSet(columns: [], rows: [])
-                sqlStatusMessage = "\(changedRows) rows affected"
-                tables = try await session.tables(in: selectedSchema?.name ?? schemas.first?.name ?? "main")
+        let resultProducing = isResultProducingSQL(sql)
+        let limit = autoLimitSelects ? 1000 : nil
+        let schema = selectedSchema?.name ?? schemas.first?.name ?? "main"
+        activeQueryTask = Task { [weak self] in
+            do {
+                let outcome: SQLExecutionOutcome
+                if resultProducing {
+                    outcome = .result(try await session.query(sql, limit: limit))
+                } else {
+                    let changedRows = try await session.execute(sql)
+                    outcome = .changed(changedRows, try await session.tables(in: schema))
+                }
+                self?.finishSQL(outcome, sql: sql, generation: generation)
+            } catch {
+                self?.finishSQL(error: error, generation: generation, session: session)
             }
-            recordSQLHistory(sql)
-        } catch {
-            errorMessage = error.localizedDescription
         }
+        queryTimeoutTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(self?.queryTimeoutSeconds ?? 30)) }
+            catch { return }
+            self?.timeoutSQL(generation: generation, session: session)
+        }
+    }
+
+    func cancelQuery() async {
+        guard queryExecutionState == .running, let session else { return }
+        queryExecutionState = .cancelling
+        queryGeneration += 1
+        queryExecutionState = .disconnected
         isLoading = false
+        errorMessage = DatabaseError.queryCancelled.localizedDescription
+        beginQueryTeardown(session: session)
+    }
+
+    func reconnect() async {
+        guard queryExecutionState == .disconnected else { return }
+        if let queryTeardownTask { await queryTeardownTask.value }
+        if let activeQueryTask { await activeQueryTask.value }
+        self.queryTeardownTask = nil
+        self.activeQueryTask = nil
+        queryExecutionState = .idle
+        if let activeProfile {
+            await connectProfile(activeProfile)
+        } else if let config = activeConnectionConfig {
+            restoreConnectionFields(from: config)
+            switch config.kind {
+            case .sqlite: await openSQLite(path: config.filePath ?? databasePath)
+            case .mysql: await openMySQL()
+            case .postgresql: await openPostgreSQL()
+            }
+        } else {
+            switch activeConnectionKind {
+            case .sqlite: await openSQLite(path: databasePath)
+            case .mysql: await openMySQL()
+            case .postgresql: await openPostgreSQL()
+            case nil: break
+            }
+        }
+        if session == nil { queryExecutionState = .disconnected }
+    }
+
+    private func finishSQL(_ outcome: SQLExecutionOutcome, sql: String, generation: Int) {
+        guard generation == queryGeneration else { return }
+        queryTimeoutTask?.cancel()
+        queryTimeoutTask = nil
+        switch outcome {
+        case .result(let result):
+            resultSet = result
+            sqlStatusMessage = "\(result.rows.count) rows"
+        case .changed(let count, let refreshedTables):
+            resultSet = ResultSet(columns: [], rows: [])
+            sqlStatusMessage = "\(count) rows affected"
+            tables = refreshedTables
+        }
+        recordSQLHistory(sql)
+        queryExecutionState = .idle
+        isLoading = false
+        activeQueryTask = nil
+    }
+
+    private func finishSQL(error: Error, generation: Int, session: ConnectionSession) {
+        guard generation == queryGeneration else { return }
+        queryTimeoutTask?.cancel()
+        queryTimeoutTask = nil
+        let classified = classifyQueryError(error)
+        errorMessage = classified.localizedDescription
+        isLoading = false
+        activeQueryTask = nil
+        if case .connectionLost = classified {
+            queryExecutionState = .disconnected
+            beginQueryTeardown(session: session)
+        } else if case .queryCancelled = classified {
+            queryExecutionState = .disconnected
+            beginQueryTeardown(session: session)
+        } else {
+            queryExecutionState = .idle
+        }
+    }
+
+    private func timeoutSQL(generation: Int, session: ConnectionSession) {
+        guard generation == queryGeneration, queryExecutionState == .running else { return }
+        queryGeneration += 1
+        errorMessage = DatabaseError.queryTimedOut(seconds: queryTimeoutSeconds).localizedDescription
+        queryExecutionState = .disconnected
+        isLoading = false
+        beginQueryTeardown(session: session)
+    }
+
+    private func beginQueryTeardown(session: ConnectionSession) {
+        queryTimeoutTask?.cancel()
+        queryTimeoutTask = nil
+        activeQueryTask?.cancel()
+        if queryTeardownTask == nil {
+            queryTeardownTask = Task { await session.cancelCurrentQuery() }
+        }
+    }
+
+    private func restoreConnectionFields(from config: ConnectionConfig) {
+        switch config.kind {
+        case .sqlite: break
+        case .mysql:
+            mysqlHost = config.host ?? ""
+            mysqlPort = String(config.port ?? 3306)
+            mysqlDatabase = config.database ?? ""
+            mysqlUser = config.user ?? ""
+            mysqlPassword = config.password ?? ""
+        case .postgresql:
+            postgresqlHost = config.host ?? ""
+            postgresqlPort = String(config.port ?? 5432)
+            postgresqlDatabase = config.database ?? ""
+            postgresqlUser = config.user ?? ""
+            postgresqlPassword = config.password ?? ""
+        }
+    }
+
+    private func classifyQueryError(_ error: Error) -> DatabaseError {
+        if let databaseError = error as? DatabaseError {
+            switch databaseError {
+            case .queryFailed(let detail), .connectionFailed(let detail):
+                if isConnectionLoss(detail) { return .connectionLost(detail) }
+            default: break
+            }
+            return databaseError
+        }
+        if error is CancellationError { return .queryCancelled }
+        let detail = error.localizedDescription
+        if isConnectionLoss(detail) {
+            return .connectionLost(detail)
+        }
+        return .queryFailed(detail)
+    }
+
+    private func isConnectionLoss(_ detail: String) -> Bool {
+        let lower = detail.lowercased()
+        return ["connection reset", "broken pipe", "connection closed", "unexpected eof", "not connected", "connection refused", "server closed", "channel inactive", "io on closed channel", "ioonclosedchannel", "eof while reading"].contains(where: lower.contains)
     }
 
     func copyCell(_ value: DBValue) {
