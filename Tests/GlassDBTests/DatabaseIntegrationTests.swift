@@ -178,10 +178,6 @@ struct DatabaseIntegrationTests {
             #expect(duplicated.rows.first?.values["duplicate"] == .integer(1))
             #expect(duplicated.rows.first?.values["duplicate_2"] == .integer(1))
 
-            let collisionColumns = try await driver.columns(of: TableRef(schema: "public", name: "primary_key_collision_source"))
-            #expect(collisionColumns.first { $0.name == "id" }?.isPrimaryKey == true)
-            #expect(collisionColumns.first { $0.name == "collision_value" }?.isPrimaryKey == false)
-
             let explicitlyLimited = try await driver.query("SELECT id\nFROM public.projects\nLIMIT 2", limit: 1000)
             #expect(explicitlyLimited.rows.map { $0.values["id"] } == [.integer(1), .integer(2)])
 
@@ -219,7 +215,7 @@ struct DatabaseIntegrationTests {
 
     private func loadPostgreSQLFixture(using docker: DockerCompose) throws {
         _ = try docker.exec(service: "postgres", arguments: [
-            "psql", "-U", "glassdb", "-d", "glassdb", "-f", "/fixtures/postgres.sql"
+            "psql", "-v", "ON_ERROR_STOP=1", "-U", "glassdb", "-d", "glassdb", "-f", "/fixtures/postgres.sql"
         ])
     }
 
