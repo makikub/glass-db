@@ -157,6 +157,7 @@ enum DatabaseError: LocalizedError, Sendable {
     case missingSQLitePath
     case connectionFailed(String)
     case queryFailed(String)
+    case readOnlyViolation
     case notConnected
 
     var errorDescription: String? {
@@ -169,6 +170,8 @@ enum DatabaseError: LocalizedError, Sendable {
             return message
         case .queryFailed(let message):
             return message
+        case .readOnlyViolation:
+            return "This PostgreSQL connection is read-only. Only SELECT queries are allowed."
         case .notConnected:
             return "Database is not connected."
         }

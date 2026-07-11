@@ -1,10 +1,12 @@
 # GlassDB
 
 GlassDB is a SwiftUI macOS database viewer MVP. It currently supports SQLite
-files and read-only MySQL connections:
+files plus MySQL and PostgreSQL server connections. PostgreSQL connections are
+enforced as read-only:
 
 - open or create a sample SQLite database
 - connect to a MySQL database with host, port, database, user, and password
+- connect read-only to PostgreSQL and browse schemas, tables, and views
 - browse tables from a sidebar
 - view rows in a read-only grid
 - sort, filter, page, count rows, and copy values
@@ -18,9 +20,8 @@ swift test
 ```
 
 Integration tests can start real MySQL and PostgreSQL containers, load fixture
-data, and verify them through `ConnectionSession` using test-only drivers backed
-by the native database clients. They are opt-in because they pull Docker images
-and create containers:
+data, and verify both production NIO drivers through `ConnectionSession`. They
+are opt-in because they pull Docker images and create containers:
 
 ```sh
 GLASSDB_INTEGRATION_DATABASES=1 swift test --disable-sandbox --filter DatabaseIntegrationTests

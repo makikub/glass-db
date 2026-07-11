@@ -18,7 +18,14 @@ final class AppModel {
     var mysqlDatabase = ""
     var mysqlUser = ""
     var mysqlPassword = ""
+    var postgresqlHost = "127.0.0.1"
+    var postgresqlPort = "5432"
+    var postgresqlDatabase = ""
+    var postgresqlUser = ""
+    var postgresqlPassword = ""
+    var serverKind: DatabaseKind = .mysql
     var schemas: [SchemaInfo] = []
+    var selectedSchema: SchemaInfo?
     var tables: [TableInfo] = []
     var filterText = ""
     var selectedTable: TableInfo?
@@ -76,6 +83,17 @@ final class AppModel {
             && !mysqlUser.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    var canConnectPostgreSQL: Bool {
+        !postgresqlHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && Int(postgresqlPort) != nil
+            && !postgresqlDatabase.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !postgresqlUser.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var canConnectServer: Bool {
+        serverKind == .mysql ? canConnectMySQL : canConnectPostgreSQL
+    }
+
     func openSQLite(path: String) async {
         isLoading = true
         errorMessage = nil
@@ -93,7 +111,8 @@ final class AppModel {
             try await session.connect(config: config)
             self.session = session
             schemas = try await session.schemas()
-            tables = try await session.tables(in: schemas.first?.name ?? "main")
+            selectedSchema = schemas.first
+            tables = try await session.tables(in: selectedSchema?.name ?? "main")
             screen = .database
         } catch {
             errorMessage = error.localizedDescription
@@ -130,13 +149,64 @@ final class AppModel {
             try await session.connect(config: config)
             self.session = session
             schemas = try await session.schemas()
-            tables = try await session.tables(in: schemas.first?.name ?? database)
+            selectedSchema = schemas.first
+            tables = try await session.tables(in: selectedSchema?.name ?? database)
             sqlText = "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = \(quoteLiteral(database)) ORDER BY table_type, table_name"
             screen = .database
         } catch {
             errorMessage = error.localizedDescription
         }
         isLoading = false
+    }
+
+    func openPostgreSQL() async {
+        isLoading = true
+        errorMessage = nil
+        if let session {
+            await session.disconnect()
+        }
+        resetWorkspace()
+
+        let host = postgresqlHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        let database = postgresqlDatabase.trimmingCharacters(in: .whitespacesAndNewlines)
+        let user = postgresqlUser.trimmingCharacters(in: .whitespacesAndNewlines)
+        let port = Int(postgresqlPort.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 5432
+        connectionName = "PostgreSQL: \(database)"
+        databasePath = "\(host):\(port)/\(database)"
+
+        let config = ConnectionConfig(
+            name: connectionName,
+            kind: .postgresql,
+            host: host,
+            port: port,
+            database: database,
+            user: user,
+            password: postgresqlPassword.isEmpty ? nil : postgresqlPassword
+        )
+        let session = ConnectionSession(driver: PostgreSQLDriver())
+        do {
+            try await session.connect(config: config)
+            self.session = session
+            schemas = try await session.schemas()
+            selectedSchema = schemas.first
+            tables = try await session.tables(in: selectedSchema?.name ?? "public")
+            sqlText = "SELECT table_schema, table_name, table_type FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_type, table_name"
+            screen = .database
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isLoading = false
+    }
+
+    func openSelectedServer() async {
+        switch serverKind {
+        case .mysql:
+            await openMySQL()
+        case .postgresql:
+            await openPostgreSQL()
+        case .sqlite:
+            break
+        }
     }
 
     func createSampleDatabase() async {
@@ -193,10 +263,21 @@ final class AppModel {
     func refresh() async {
         guard let session else { return }
         do {
-            tables = try await session.tables(in: schemas.first?.name ?? "main")
+            tables = try await session.tables(in: selectedSchema?.name ?? schemas.first?.name ?? "main")
             if isTableMode {
                 await loadRows()
             }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func selectSchema(_ schema: SchemaInfo) async {
+        guard let session else { return }
+        selectedSchema = schema
+        resetTableSelection()
+        do {
+            tables = try await session.tables(in: schema.name)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -295,7 +376,7 @@ final class AppModel {
                 let changedRows = try await session.execute(sql)
                 resultSet = ResultSet(columns: [], rows: [])
                 sqlStatusMessage = "\(changedRows) rows affected"
-                tables = try await session.tables(in: schemas.first?.name ?? "main")
+                tables = try await session.tables(in: selectedSchema?.name ?? schemas.first?.name ?? "main")
             }
             recordSQLHistory(sql)
         } catch {
@@ -361,6 +442,12 @@ final class AppModel {
     }
 
     private func resetWorkspace() {
+        selectedSchema = nil
+        resetTableSelection()
+        sqlStatusMessage = ""
+    }
+
+    private func resetTableSelection() {
         selectedTable = nil
         tableColumns = []
         resultSet = ResultSet(columns: [], rows: [])
@@ -371,7 +458,6 @@ final class AppModel {
         filterColumn = ""
         filterOperator = .equals
         filterValue = ""
-        sqlStatusMessage = ""
     }
 }
 

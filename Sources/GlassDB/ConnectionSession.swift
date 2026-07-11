@@ -31,7 +31,7 @@ actor ConnectionSession {
         filter: FilterState?
     ) async throws -> ResultSet {
         let offset = max(0, page) * pageSize
-        var sql = "SELECT * FROM \(driver.quoteIdentifier(table.name))"
+        var sql = "SELECT * FROM \(qualifiedName(for: table))"
         if let whereClause = whereClause(for: filter) {
             sql += " WHERE \(whereClause)"
         }
@@ -43,7 +43,7 @@ actor ConnectionSession {
     }
 
     func rowCount(in table: TableRef, filter: FilterState?) async throws -> Int {
-        var sql = "SELECT COUNT(*) AS count FROM \(driver.quoteIdentifier(table.name))"
+        var sql = "SELECT COUNT(*) AS count FROM \(qualifiedName(for: table))"
         if let whereClause = whereClause(for: filter) {
             sql += " WHERE \(whereClause)"
         }
@@ -86,6 +86,10 @@ actor ConnectionSession {
             guard !filter.value.isEmpty else { return nil }
             return "\(column) \(filter.op.rawValue) \(quoteLiteral(filter.value))"
         }
+    }
+
+    private func qualifiedName(for table: TableRef) -> String {
+        "\(driver.quoteIdentifier(table.schema)).\(driver.quoteIdentifier(table.name))"
     }
 }
 
