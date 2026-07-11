@@ -47,8 +47,35 @@ final class AppModel {
     var sqlStatusMessage = ""
     var sqlHistory: [String] = []
     var autoLimitSelects = true
+    var connectionProfiles: [ConnectionProfile] = []
 
     private var session: ConnectionSession?
+    private var activeSecurityScopedURL: URL?
+    private let profileStore: any ConnectionProfilePersisting
+    private let passwordStore: any ConnectionPasswordStoring
+
+    init(
+        profileStore: (any ConnectionProfilePersisting)? = nil,
+        passwordStore: any ConnectionPasswordStoring = KeychainPasswordStore()
+    ) {
+        self.passwordStore = passwordStore
+        if let profileStore {
+            self.profileStore = profileStore
+        } else {
+            do {
+                self.profileStore = try ConnectionProfileStore()
+            } catch {
+                self.profileStore = InMemoryConnectionProfileStore()
+                self.errorMessage = error.localizedDescription
+                return
+            }
+        }
+        do {
+            connectionProfiles = try self.profileStore.load().sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        } catch {
+            errorMessage = "Saved connections could not be loaded: \(error.localizedDescription)"
+        }
+    }
 
     var filteredTables: [TableInfo] {
         guard !filterText.isEmpty else { return tables }
@@ -97,9 +124,7 @@ final class AppModel {
     func openSQLite(path: String) async {
         isLoading = true
         errorMessage = nil
-        if let session {
-            await session.disconnect()
-        }
+        await disconnectCurrentSession()
         resetWorkspace()
         databasePath = path
         connectionName = URL(fileURLWithPath: path).lastPathComponent
@@ -123,9 +148,7 @@ final class AppModel {
     func openMySQL() async {
         isLoading = true
         errorMessage = nil
-        if let session {
-            await session.disconnect()
-        }
+        await disconnectCurrentSession()
         resetWorkspace()
 
         let host = mysqlHost.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -162,9 +185,7 @@ final class AppModel {
     func openPostgreSQL() async {
         isLoading = true
         errorMessage = nil
-        if let session {
-            await session.disconnect()
-        }
+        await disconnectCurrentSession()
         resetWorkspace()
 
         let host = postgresqlHost.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -206,6 +227,196 @@ final class AppModel {
             await openPostgreSQL()
         case .sqlite:
             break
+        }
+    }
+
+    func saveProfile(_ profile: ConnectionProfile, password: String?, replacePassword: Bool) {
+        do {
+            var updated = connectionProfiles
+            if let index = updated.firstIndex(where: { $0.id == profile.id }) {
+                updated[index] = profile
+            } else {
+                updated.append(profile)
+            }
+            let previousPassword = replacePassword ? try passwordStore.password(for: profile.id) : nil
+            if replacePassword {
+                if let password, !password.isEmpty {
+                    try passwordStore.save(password: password, for: profile.id)
+                } else {
+                    try passwordStore.deletePassword(for: profile.id)
+                }
+            }
+            do {
+                try profileStore.save(updated)
+            } catch {
+                if replacePassword {
+                    restorePassword(previousPassword, for: profile.id)
+                }
+                throw error
+            }
+            connectionProfiles = updated.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            infoMessage = "Saved connection \(profile.name)."
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func deleteProfile(_ profile: ConnectionProfile) {
+        do {
+            let updated = connectionProfiles.filter { $0.id != profile.id }
+            let previousPassword = try passwordStore.password(for: profile.id)
+            try passwordStore.deletePassword(for: profile.id)
+            do {
+                try profileStore.save(updated)
+            } catch {
+                restorePassword(previousPassword, for: profile.id)
+                throw error
+            }
+            connectionProfiles = updated
+            infoMessage = "Deleted connection \(profile.name)."
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func duplicateProfile(_ profile: ConnectionProfile) {
+        do {
+            var copy = profile
+            copy.id = UUID()
+            copy.name = "\(profile.name) Copy"
+            if let password = try passwordStore.password(for: profile.id) {
+                try passwordStore.save(password: password, for: copy.id)
+            }
+            var updated = connectionProfiles
+            updated.append(copy)
+            do {
+                try profileStore.save(updated)
+            } catch {
+                try? passwordStore.deletePassword(for: copy.id)
+                throw error
+            }
+            connectionProfiles = updated.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            infoMessage = "Duplicated connection \(profile.name)."
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func connectProfile(_ profile: ConnectionProfile) async {
+        do {
+            switch profile.kind {
+            case .sqlite:
+                await openSavedSQLite(profile)
+            case .mysql:
+                let password = try passwordStore.password(for: profile.id)
+                serverKind = .mysql
+                mysqlHost = profile.host ?? ""
+                mysqlPort = String(profile.port ?? 3306)
+                mysqlDatabase = profile.database ?? ""
+                mysqlUser = profile.user ?? ""
+                mysqlPassword = password ?? ""
+                await openMySQL()
+                if screen == .database { connectionName = profile.name }
+            case .postgresql:
+                let password = try passwordStore.password(for: profile.id)
+                serverKind = .postgresql
+                postgresqlHost = profile.host ?? ""
+                postgresqlPort = String(profile.port ?? 5432)
+                postgresqlDatabase = profile.database ?? ""
+                postgresqlUser = profile.user ?? ""
+                postgresqlPassword = password ?? ""
+                await openPostgreSQL()
+                if screen == .database { connectionName = profile.name }
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func testProfile(_ profile: ConnectionProfile) async {
+        isLoading = true
+        errorMessage = nil
+        do {
+            let sqlitePath: String?
+            let password: String?
+            if profile.kind == .sqlite {
+                sqlitePath = try beginSQLiteAccess(for: profile)
+                password = nil
+            } else {
+                sqlitePath = nil
+                password = try passwordStore.password(for: profile.id)
+            }
+            let driver = driver(for: profile.kind)
+            try await driver.connect(config: profile.connectionConfig(password: password, sqlitePath: sqlitePath))
+            await driver.disconnect()
+            endSQLiteAccess()
+            infoMessage = "Connection test succeeded for \(profile.name)."
+        } catch {
+            endSQLiteAccess()
+            errorMessage = error.localizedDescription
+        }
+        isLoading = false
+    }
+
+    private func driver(for kind: DatabaseKind) -> any DatabaseDriver {
+        switch kind {
+        case .sqlite: SQLiteDriver()
+        case .mysql: MySQLDriver()
+        case .postgresql: PostgreSQLDriver()
+        }
+    }
+
+    private func beginSQLiteAccess(for profile: ConnectionProfile) throws -> String {
+        guard let path = profile.filePath else { throw DatabaseError.missingSQLitePath }
+        guard let bookmark = profile.sqliteBookmark else { return path }
+        let url = try SQLiteBookmark.resolve(bookmark)
+        guard url.startAccessingSecurityScopedResource() else {
+            throw ConnectionProfileStoreError.sqliteAccessDenied(url.path)
+        }
+        activeSecurityScopedURL = url
+        return url.path
+    }
+
+    private func openSavedSQLite(_ profile: ConnectionProfile) async {
+        isLoading = true
+        errorMessage = nil
+        await disconnectCurrentSession()
+        resetWorkspace()
+        do {
+            let path = try beginSQLiteAccess(for: profile)
+            databasePath = path
+            connectionName = profile.name
+            sqlText = "SELECT name, type FROM sqlite_master ORDER BY type, name"
+            let session = ConnectionSession(driver: SQLiteDriver())
+            try await session.connect(config: profile.connectionConfig(sqlitePath: path))
+            self.session = session
+            schemas = try await session.schemas()
+            selectedSchema = schemas.first
+            tables = try await session.tables(in: selectedSchema?.name ?? "main")
+            screen = .database
+        } catch {
+            endSQLiteAccess()
+            errorMessage = error.localizedDescription
+        }
+        isLoading = false
+    }
+
+    private func endSQLiteAccess() {
+        activeSecurityScopedURL?.stopAccessingSecurityScopedResource()
+        activeSecurityScopedURL = nil
+    }
+
+    private func disconnectCurrentSession() async {
+        if let session { await session.disconnect() }
+        self.session = nil
+        endSQLiteAccess()
+    }
+
+    private func restorePassword(_ password: String?, for profileID: UUID) {
+        if let password {
+            try? passwordStore.save(password: password, for: profileID)
+        } else {
+            try? passwordStore.deletePassword(for: profileID)
         }
     }
 
