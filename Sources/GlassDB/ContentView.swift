@@ -459,6 +459,8 @@ struct DataGridView: View {
                                         model.selectedCell = CellSelection(column: column.name, value: value)
                                     } copyAction: {
                                         model.copyCell(value)
+                                    } deleteAction: {
+                                        rowPendingDeletion = row
                                     }
                                 }
                             }
@@ -524,6 +526,7 @@ struct EditableValueCell: View {
     let commit: (String) -> Void
     let selectAction: () -> Void
     let copyAction: () -> Void
+    let deleteAction: () -> Void
     @State private var text = ""
     @State private var editing = false
     var body: some View {
@@ -537,7 +540,13 @@ struct EditableValueCell: View {
         }
         .font(.system(.body, design: .monospaced)).frame(width: 128, height: 34, alignment: .leading).padding(.horizontal, 10)
         .background(Color(nsColor: .textBackgroundColor)).border(Color(nsColor: .separatorColor), width: 0.5)
-        .contextMenu { Button("Copy Cell") { copyAction() } }
+        .contextMenu {
+            Button("Copy Cell") { copyAction() }
+            if editable {
+                Divider()
+                Button("Delete Row", role: .destructive) { deleteAction() }
+            }
+        }
     }
 }
 
