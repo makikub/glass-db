@@ -76,33 +76,43 @@ struct WelcomeView: View {
             Divider()
                 .frame(maxWidth: 520)
 
-            MySQLConnectionForm()
+            ServerConnectionForm()
         }
         .padding(40)
     }
 }
 
-struct MySQLConnectionForm: View {
+struct ServerConnectionForm: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         @Bindable var model = model
 
         VStack(alignment: .leading, spacing: 12) {
-            Label("MySQL", systemImage: "server.rack")
-                .font(.headline)
+            HStack {
+                Label("Server Database", systemImage: "server.rack")
+                    .font(.headline)
+                Spacer()
+                Picker("Database", selection: $model.serverKind) {
+                    Text("MySQL").tag(DatabaseKind.mysql)
+                    Text("PostgreSQL").tag(DatabaseKind.postgresql)
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 220)
+            }
 
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
                 GridRow {
                     Text("Host")
                         .foregroundStyle(.secondary)
-                    TextField("127.0.0.1", text: $model.mysqlHost)
+                    TextField("127.0.0.1", text: hostBinding)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 240)
 
                     Text("Port")
                         .foregroundStyle(.secondary)
-                    TextField("3306", text: $model.mysqlPort)
+                    TextField(portPlaceholder, text: portBinding)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 80)
                 }
@@ -110,13 +120,13 @@ struct MySQLConnectionForm: View {
                 GridRow {
                     Text("Database")
                         .foregroundStyle(.secondary)
-                    TextField("glassdb", text: $model.mysqlDatabase)
+                    TextField("glassdb", text: databaseBinding)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 240)
 
                     Text("User")
                         .foregroundStyle(.secondary)
-                    TextField("glassdb", text: $model.mysqlUser)
+                    TextField("glassdb", text: userBinding)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 160)
                 }
@@ -124,23 +134,62 @@ struct MySQLConnectionForm: View {
                 GridRow {
                     Text("Password")
                         .foregroundStyle(.secondary)
-                    SecureField("Password", text: $model.mysqlPassword)
+                    SecureField("Password", text: passwordBinding)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 240)
 
                     Color.clear
                     Button {
-                        Task { await model.openMySQL() }
+                        Task { await model.openSelectedServer() }
                     } label: {
                         Label("Connect", systemImage: "network")
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(!model.canConnectMySQL || model.isLoading)
+                    .disabled(!model.canConnectServer || model.isLoading)
                 }
             }
             .font(.callout)
         }
         .frame(maxWidth: 620, alignment: .leading)
+    }
+
+    private var portPlaceholder: String {
+        model.serverKind == .mysql ? "3306" : "5432"
+    }
+
+    private var hostBinding: Binding<String> {
+        Binding(
+            get: { model.serverKind == .mysql ? model.mysqlHost : model.postgresqlHost },
+            set: { model.serverKind == .mysql ? (model.mysqlHost = $0) : (model.postgresqlHost = $0) }
+        )
+    }
+
+    private var portBinding: Binding<String> {
+        Binding(
+            get: { model.serverKind == .mysql ? model.mysqlPort : model.postgresqlPort },
+            set: { model.serverKind == .mysql ? (model.mysqlPort = $0) : (model.postgresqlPort = $0) }
+        )
+    }
+
+    private var databaseBinding: Binding<String> {
+        Binding(
+            get: { model.serverKind == .mysql ? model.mysqlDatabase : model.postgresqlDatabase },
+            set: { model.serverKind == .mysql ? (model.mysqlDatabase = $0) : (model.postgresqlDatabase = $0) }
+        )
+    }
+
+    private var userBinding: Binding<String> {
+        Binding(
+            get: { model.serverKind == .mysql ? model.mysqlUser : model.postgresqlUser },
+            set: { model.serverKind == .mysql ? (model.mysqlUser = $0) : (model.postgresqlUser = $0) }
+        )
+    }
+
+    private var passwordBinding: Binding<String> {
+        Binding(
+            get: { model.serverKind == .mysql ? model.mysqlPassword : model.postgresqlPassword },
+            set: { model.serverKind == .mysql ? (model.mysqlPassword = $0) : (model.postgresqlPassword = $0) }
+        )
     }
 }
 
@@ -242,11 +291,29 @@ struct SidebarView: View {
                 .padding(.horizontal, 18)
                 .padding(.bottom, 12)
 
+            if model.schemas.count > 1 {
+                Picker("Schema", selection: schemaSelection) {
+                    ForEach(model.schemas) { schema in
+                        Text(schema.name).tag(schema)
+                    }
+                }
+                .pickerStyle(.menu)
+                .padding(.horizontal, 18)
+                .padding(.bottom, 12)
+            }
+
             List(model.filteredTables) { table in
                 SidebarTableRow(table: table)
             }
             .listStyle(.sidebar)
         }
+    }
+
+    private var schemaSelection: Binding<SchemaInfo> {
+        Binding(
+            get: { model.selectedSchema ?? model.schemas.first ?? SchemaInfo(name: "main") },
+            set: { schema in Task { await model.selectSchema(schema) } }
+        )
     }
 }
 
