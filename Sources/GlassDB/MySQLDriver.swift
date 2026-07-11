@@ -4,6 +4,7 @@ import NIOCore
 import NIOPosix
 
 actor MySQLDriver: DatabaseDriver {
+    nonisolated var cancellationClosesConnection: Bool { true }
     private var connection: MySQLConnection?
     private var eventLoopGroup: MultiThreadedEventLoopGroup?
     private var databaseName = ""
@@ -93,7 +94,7 @@ actor MySQLDriver: DatabaseDriver {
         do {
             rows = try await connection.simpleQuery(limitedSQL(sql, limit: limit)).get()
         } catch {
-            throw DatabaseError.queryFailed("MySQL query failed: \(error)")
+            throw classifiedDriverQueryError(driver: "MySQL", error: error)
         }
 
         guard let firstRow = rows.first else {
@@ -125,7 +126,11 @@ actor MySQLDriver: DatabaseDriver {
             let countRows = try await connection.simpleQuery("SELECT ROW_COUNT() AS affected_rows").get()
             return countRows.first?.column("affected_rows")?.int.map { Int($0) } ?? 0
         } catch {
-            throw DatabaseError.queryFailed("MySQL statement failed: \(error)")
+            let classified = classifiedDriverQueryError(driver: "MySQL", error: error)
+            if case .queryFailed(let detail) = classified {
+                throw DatabaseError.queryFailed(detail.replacingOccurrences(of: "query failed", with: "statement failed"))
+            }
+            throw classified
         }
     }
 
@@ -140,6 +145,8 @@ actor MySQLDriver: DatabaseDriver {
         }
         databaseName = ""
     }
+
+    func cancelCurrentQuery() async { await disconnect() }
 
     nonisolated func quoteIdentifier(_ identifier: String) -> String {
         "`\(identifier.replacingOccurrences(of: "`", with: "``"))`"

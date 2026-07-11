@@ -3,6 +3,7 @@ import Logging
 import PostgresNIO
 
 actor PostgreSQLDriver: DatabaseDriver {
+    nonisolated var cancellationClosesConnection: Bool { true }
     private static let logger = Logger(label: "GlassDB.PostgreSQLDriver")
     private var client: PostgresClient?
     private var runTask: Task<Void, Never>?
@@ -128,7 +129,7 @@ actor PostgreSQLDriver: DatabaseDriver {
                 return try await sequence.collect()
             }
         } catch {
-            throw DatabaseError.queryFailed("PostgreSQL query failed: \(error)")
+            throw classifiedDriverQueryError(driver: "PostgreSQL", error: error)
         }
 
         guard let first = rows.first else {
@@ -170,7 +171,13 @@ actor PostgreSQLDriver: DatabaseDriver {
                 }
             }
         } catch let error as DataEditingError { throw error }
-        catch { throw DatabaseError.queryFailed("PostgreSQL mutation batch failed: \(error)") }
+        catch {
+            let classified = classifiedDriverQueryError(driver: "PostgreSQL", error: error)
+            if case .queryFailed(let detail) = classified {
+                throw DatabaseError.queryFailed(detail.replacingOccurrences(of: "query failed", with: "mutation batch failed"))
+            }
+            throw classified
+        }
     }
 
     func disconnect() async {
@@ -181,6 +188,8 @@ actor PostgreSQLDriver: DatabaseDriver {
         runTask = nil
         client = nil
     }
+
+    func cancelCurrentQuery() async { await disconnect() }
 
     nonisolated func quoteIdentifier(_ identifier: String) -> String {
         "\"\(identifier.replacingOccurrences(of: "\"", with: "\"\""))\""

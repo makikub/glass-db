@@ -3,6 +3,7 @@ import SQLite3
 
 actor SQLiteDriver: DatabaseDriver {
     private var db: OpaquePointer?
+    private let cancellation = SQLiteCancellationState()
 
     func connect(config: ConnectionConfig) async throws {
         guard config.kind == .sqlite else {
@@ -66,6 +67,8 @@ actor SQLiteDriver: DatabaseDriver {
 
     func query(_ sql: String, limit: Int?) async throws -> ResultSet {
         let handle = try requireConnection()
+        installCancellationHandler(on: handle)
+        defer { removeCancellationHandler(from: handle) }
         var statement: OpaquePointer?
         let finalSQL = limitedSQL(sql, limit: limit)
         guard sqlite3_prepare_v2(handle, finalSQL, -1, &statement, nil) == SQLITE_OK else {
@@ -94,6 +97,7 @@ actor SQLiteDriver: DatabaseDriver {
             } else if step == SQLITE_DONE {
                 break
             } else {
+                if step == SQLITE_INTERRUPT && cancellation.isCancelled { throw DatabaseError.queryCancelled }
                 throw DatabaseError.queryFailed(String(cString: sqlite3_errmsg(handle)))
             }
         }
@@ -103,7 +107,11 @@ actor SQLiteDriver: DatabaseDriver {
 
     func execute(_ sql: String) async throws -> Int {
         let handle = try requireConnection()
-        guard sqlite3_exec(handle, sql, nil, nil, nil) == SQLITE_OK else {
+        installCancellationHandler(on: handle)
+        defer { removeCancellationHandler(from: handle) }
+        let result = sqlite3_exec(handle, sql, nil, nil, nil)
+        guard result == SQLITE_OK else {
+            if result == SQLITE_INTERRUPT && cancellation.isCancelled { throw DatabaseError.queryCancelled }
             throw DatabaseError.queryFailed(String(cString: sqlite3_errmsg(handle)))
         }
         return Int(sqlite3_changes(handle))
@@ -114,6 +122,21 @@ actor SQLiteDriver: DatabaseDriver {
             sqlite3_close(db)
             self.db = nil
         }
+    }
+
+    nonisolated func cancelCurrentQuery() async { cancellation.cancel() }
+
+    private func installCancellationHandler(on handle: OpaquePointer) {
+        cancellation.begin()
+        sqlite3_progress_handler(handle, 1_000, { context in
+            guard let context else { return 0 }
+            return Unmanaged<SQLiteCancellationState>.fromOpaque(context).takeUnretainedValue().isCancelled ? 1 : 0
+        }, Unmanaged.passUnretained(cancellation).toOpaque())
+    }
+
+    private func removeCancellationHandler(from handle: OpaquePointer) {
+        sqlite3_progress_handler(handle, 0, nil, nil)
+        cancellation.finish()
     }
 
     private func requireConnection() throws -> OpaquePointer {
@@ -159,6 +182,15 @@ actor SQLiteDriver: DatabaseDriver {
         }
         return "\(trimmed) LIMIT \(limit)"
     }
+}
+
+private final class SQLiteCancellationState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+    var isCancelled: Bool { lock.withLock { cancelled } }
+    func begin() { lock.withLock { cancelled = false } }
+    func cancel() { lock.withLock { cancelled = true } }
+    func finish() { lock.withLock { cancelled = false } }
 }
 
 func quoteIdentifier(_ identifier: String) -> String {

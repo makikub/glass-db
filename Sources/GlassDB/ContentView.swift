@@ -702,19 +702,43 @@ struct SQLWorkspaceView: View {
                     }
 
                 HStack(spacing: 12) {
-                    Button {
-                        Task { await model.runSQL() }
-                    } label: {
-                        Label("Run", systemImage: "play.fill")
+                    if model.queryExecutionState.isRunning {
+                        Button {
+                            Task { await model.cancelQuery() }
+                        } label: {
+                            Label(model.queryExecutionState == .cancelling ? "Cancelling…" : "Cancel", systemImage: "stop.fill")
+                        }
+                        .disabled(model.queryExecutionState == .cancelling)
+                        .buttonStyle(.borderedProminent)
+                    } else {
+                        Button {
+                            Task { await model.runSQL() }
+                        } label: {
+                            Label("Run", systemImage: "play.fill")
+                        }
+                        .keyboardShortcut(.return, modifiers: [.command])
+                        .buttonStyle(.borderedProminent)
+                        .disabled(model.queryExecutionState == .disconnected)
                     }
-                    .keyboardShortcut(.return, modifiers: [.command])
-                    .buttonStyle(.borderedProminent)
+
+                    if model.queryExecutionState == .disconnected {
+                        Button {
+                            Task { await model.reconnect() }
+                        } label: {
+                            Label("Reconnect", systemImage: "arrow.clockwise")
+                        }
+                    }
 
                     Toggle("Auto LIMIT 1000", isOn: $model.autoLimitSelects)
                         .toggleStyle(.checkbox)
 
                     Text(model.sqlStatusMessage)
                         .foregroundStyle(.secondary)
+
+                    if model.queryExecutionState == .running {
+                        ProgressView().controlSize(.small)
+                        Text("Running (30 s timeout)").foregroundStyle(.secondary)
+                    }
 
                     Spacer()
 

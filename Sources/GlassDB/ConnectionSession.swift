@@ -2,6 +2,8 @@ import Foundation
 
 actor ConnectionSession {
     private let driver: any DatabaseDriver
+    private var invalidated = false
+    private var didDisconnect = false
 
     init(driver: any DatabaseDriver) {
         self.driver = driver
@@ -9,6 +11,8 @@ actor ConnectionSession {
 
     func connect(config: ConnectionConfig) async throws {
         try await driver.connect(config: config)
+        invalidated = false
+        didDisconnect = false
     }
 
     func schemas() async throws -> [SchemaInfo] {
@@ -64,12 +68,26 @@ actor ConnectionSession {
     }
 
     func query(_ sql: String, limit: Int?) async throws -> ResultSet {
-        try await driver.query(sql, limit: limit)
+        try ensureValid()
+        return try await driver.query(sql, limit: limit)
     }
 
     func execute(_ sql: String) async throws -> Int {
-        try await driver.execute(sql)
+        try ensureValid()
+        return try await driver.execute(sql)
     }
+
+    func cancelCurrentQuery() async {
+        invalidated = true
+        await driver.cancelCurrentQuery()
+        if driver.cancellationClosesConnection {
+            didDisconnect = true
+        } else {
+            await disconnectDriverOnce()
+        }
+    }
+
+    func invalidate() { invalidated = true }
 
     func previewMutations(_ changes: [PendingChange], table: TableRef, columns: [ColumnInfo]) throws -> [MutationStatement] {
         try driver.mutationStatements(for: changes, table: table, columns: columns)
@@ -81,8 +99,17 @@ actor ConnectionSession {
     }
 
     func disconnect() async {
+        invalidated = true
+        await disconnectDriverOnce()
+    }
+
+    private func disconnectDriverOnce() async {
+        guard !didDisconnect else { return }
+        didDisconnect = true
         await driver.disconnect()
     }
+
+    private func ensureValid() throws { if invalidated { throw DatabaseError.notConnected } }
 
     private func whereClause(for filter: FilterState?) -> String? {
         guard let filter, !filter.column.isEmpty else { return nil }
