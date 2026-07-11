@@ -33,7 +33,7 @@ struct PostgreSQLDriverTests {
     }
 
     @Test
-    func executeAlwaysPreservesReadOnlyBoundary() async {
+    func executePreservesSQLWorkspaceReadOnlyBoundary() async {
         let driver = PostgreSQLDriver()
         do {
             _ = try await driver.execute("UPDATE projects SET status = 'deleted'")

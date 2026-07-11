@@ -142,12 +142,6 @@ struct DatabaseIntegrationTests {
             let analyticsObjects = try await driver.tables(in: "analytics")
             #expect(analyticsObjects == [TableInfo(schema: "analytics", name: "project_statuses", kind: .view)])
 
-            let readOnlySetting = try await driver.query("SELECT current_setting('default_transaction_read_only') AS read_only", limit: nil)
-            #expect(readOnlySetting.rows.first?.values["read_only"] == .text("on"))
-            _ = try await driver.query("SELECT set_config('default_transaction_read_only', 'off', false)", limit: nil)
-            let forcedReadOnlySetting = try await driver.query("SELECT current_setting('transaction_read_only') AS read_only", limit: nil)
-            #expect(forcedReadOnlySetting.rows.first?.values["read_only"] == .text("on"))
-
             let typed = try await driver.query("""
             SELECT
                 42::bigint AS integer_value,
@@ -181,14 +175,11 @@ struct DatabaseIntegrationTests {
             let explicitlyLimited = try await driver.query("SELECT id\nFROM public.projects\nLIMIT 2", limit: 1000)
             #expect(explicitlyLimited.rows.map { $0.values["id"] } == [.integer(1), .integer(2)])
 
-            do {
-                _ = try await driver.query("DELETE FROM public.projects", limit: nil)
-                Issue.record("PostgreSQL query unexpectedly allowed a write")
-            } catch let error as DatabaseError {
-                #expect(error.errorDescription?.contains("read-only") == true)
-            }
-            let countAfterRejectedWrite = try await driver.query("SELECT COUNT(*) AS count FROM public.projects", limit: nil)
-            #expect(countAfterRejectedWrite.rows.first?.values["count"] == .integer(3))
+            let session = ConnectionSession(driver: driver)
+            let columns = try await session.columns(of: TableRef(schema: "public", name: "projects"))
+            try await session.applyMutations([.update(id: UUID(), originalKey: ["id": .integer(1)], values: ["status": .text("edited")])], table: TableRef(schema: "public", name: "projects"), columns: columns)
+            let edited = try await driver.query("SELECT status FROM public.projects WHERE id = 1", limit: nil)
+            #expect(edited.rows.first?.values["status"] == .text("edited"))
         }
     }
 

@@ -71,6 +71,15 @@ actor ConnectionSession {
         try await driver.execute(sql)
     }
 
+    func previewMutations(_ changes: [PendingChange], table: TableRef, columns: [ColumnInfo]) throws -> [MutationStatement] {
+        try driver.mutationStatements(for: changes, table: table, columns: columns)
+    }
+
+    func applyMutations(_ changes: [PendingChange], table: TableRef, columns: [ColumnInfo]) async throws {
+        let statements = try driver.mutationStatements(for: changes, table: table, columns: columns)
+        try await driver.applyMutations(statements)
+    }
+
     func disconnect() async {
         await driver.disconnect()
     }

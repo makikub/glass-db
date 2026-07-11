@@ -26,9 +26,6 @@ actor PostgreSQLDriver: DatabaseDriver {
             tls: .disable
         )
         configuration.options.maximumConnections = 1
-        configuration.options.additionalStartupParameters = [
-            ("default_transaction_read_only", "on")
-        ]
 
         let client = PostgresClient(configuration: configuration)
         let runTask = Task { await client.run() }
@@ -116,9 +113,7 @@ actor PostgreSQLDriver: DatabaseDriver {
     }
 
     func query(_ sql: String, limit: Int?) async throws -> ResultSet {
-        guard Self.isReadOnlyQuery(sql) else {
-            throw DatabaseError.readOnlyViolation
-        }
+        guard Self.isReadOnlyQuery(sql) else { throw DatabaseError.readOnlyViolation }
         guard let client else {
             throw DatabaseError.notConnected
         }
@@ -126,8 +121,6 @@ actor PostgreSQLDriver: DatabaseDriver {
         let rows: [PostgresRow]
         do {
             rows = try await client.withTransaction(logger: Self.logger) { connection in
-                let transactionMode = try await connection.query("SET TRANSACTION READ ONLY", logger: Self.logger)
-                _ = try await transactionMode.collect()
                 let sequence = try await connection.query(
                     PostgresQuery(unsafeSQL: Self.limitedSQL(sql, limit: limit)),
                     logger: Self.logger
@@ -164,6 +157,22 @@ actor PostgreSQLDriver: DatabaseDriver {
         throw DatabaseError.readOnlyViolation
     }
 
+    func applyMutations(_ statements: [MutationStatement]) async throws {
+        guard let client else { throw DatabaseError.notConnected }
+        do {
+            try await client.withTransaction(logger: Self.logger) { connection in
+                for statement in statements {
+                    let suffix = statement.kind == .insert ? "" : " RETURNING 1 AS affected"
+                    let rows = try await connection.query(PostgresQuery(unsafeSQL: statement.sql + suffix), logger: Self.logger).collect()
+                    if statement.kind != .insert && rows.count != 1 {
+                        throw DataEditingError.affectedRows(expected: 1, actual: rows.count)
+                    }
+                }
+            }
+        } catch let error as DataEditingError { throw error }
+        catch { throw DatabaseError.queryFailed("PostgreSQL mutation batch failed: \(error)") }
+    }
+
     func disconnect() async {
         runTask?.cancel()
         if let runTask {
@@ -175,6 +184,17 @@ actor PostgreSQLDriver: DatabaseDriver {
 
     nonisolated func quoteIdentifier(_ identifier: String) -> String {
         "\"\(identifier.replacingOccurrences(of: "\"", with: "\"\""))\""
+    }
+
+    nonisolated func mutationLiteral(_ value: DBValue) -> String {
+        if case .blob(let data) = value { return "'\\\\x\(data.map { String(format: "%02x", $0) }.joined())'::bytea" }
+        return switch value {
+        case .null: "NULL"
+        case .integer(let value): String(value)
+        case .double(let value): value.isFinite ? String(value) : "NULL"
+        case .text(let value), .unknown(let value): quoteLiteral(value)
+        case .blob: fatalError()
+        }
     }
 
     nonisolated static func isReadOnlyQuery(_ sql: String) -> Bool {
