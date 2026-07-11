@@ -4,6 +4,8 @@ enum ConnectionProfileStoreError: LocalizedError {
     case applicationSupportUnavailable
     case invalidSQLiteBookmark
     case sqliteAccessDenied(String)
+    case sqliteBookmarkCreationFailed
+    case savedConnectionNotFound
 
     var errorDescription: String? {
         switch self {
@@ -13,6 +15,10 @@ enum ConnectionProfileStoreError: LocalizedError {
             return "The saved SQLite file permission is no longer valid. Edit this connection and choose the file again."
         case .sqliteAccessDenied(let path):
             return "GlassDB could not access \(path). Edit this connection and choose the file again."
+        case .sqliteBookmarkCreationFailed:
+            return "GlassDB could not save permission for the selected SQLite file. Choose the file again."
+        case .savedConnectionNotFound:
+            return "The saved connection was changed or deleted. Reopen the connection list and try again."
         }
     }
 }
@@ -68,24 +74,65 @@ final class InMemoryConnectionProfileStore: ConnectionProfilePersisting, @unchec
     }
 }
 
-enum SQLiteBookmark {
-    static func make(for url: URL) throws -> Data {
-        try url.bookmarkData(
-            options: [.withSecurityScope],
-            includingResourceValuesForKeys: nil,
-            relativeTo: nil
-        )
+struct SQLiteBookmarkResolution: Sendable {
+    let url: URL
+    let isStale: Bool
+}
+
+protocol SQLiteBookmarkAccessing: Sendable {
+    func make(for url: URL) throws -> Data
+    func resolve(_ bookmark: Data) throws -> SQLiteBookmarkResolution
+    func startAccessingSecurityScopedResource(at url: URL) -> Bool
+    func stopAccessingSecurityScopedResource(at url: URL)
+}
+
+struct SQLiteBookmark: SQLiteBookmarkAccessing {
+    func make(for url: URL) throws -> Data {
+        do {
+            return try url.bookmarkData(
+                options: [.withSecurityScope],
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
+        } catch {
+            throw ConnectionProfileStoreError.sqliteBookmarkCreationFailed
+        }
     }
 
-    static func resolve(_ bookmark: Data) throws -> URL {
-        var isStale = false
-        let url = try URL(
-            resolvingBookmarkData: bookmark,
-            options: [.withSecurityScope],
-            relativeTo: nil,
-            bookmarkDataIsStale: &isStale
-        )
-        guard !isStale else { throw ConnectionProfileStoreError.invalidSQLiteBookmark }
-        return url
+    func resolve(_ bookmark: Data) throws -> SQLiteBookmarkResolution {
+        do {
+            var isStale = false
+            let url = try URL(
+                resolvingBookmarkData: bookmark,
+                options: [.withSecurityScope],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            )
+            return SQLiteBookmarkResolution(url: url, isStale: isStale)
+        } catch {
+            throw ConnectionProfileStoreError.invalidSQLiteBookmark
+        }
+    }
+
+    func startAccessingSecurityScopedResource(at url: URL) -> Bool {
+        url.startAccessingSecurityScopedResource()
+    }
+
+    func stopAccessingSecurityScopedResource(at url: URL) {
+        url.stopAccessingSecurityScopedResource()
+    }
+}
+
+struct SQLiteSecurityScopedResource: Sendable {
+    let url: URL
+    private let bookmarkAccess: any SQLiteBookmarkAccessing
+
+    init(url: URL, bookmarkAccess: any SQLiteBookmarkAccessing) {
+        self.url = url
+        self.bookmarkAccess = bookmarkAccess
+    }
+
+    func endAccess() {
+        bookmarkAccess.stopAccessingSecurityScopedResource(at: url)
     }
 }

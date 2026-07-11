@@ -50,15 +50,21 @@ final class AppModel {
     var connectionProfiles: [ConnectionProfile] = []
 
     private var session: ConnectionSession?
-    private var activeSecurityScopedURL: URL?
+    private var activeSecurityScopedResource: SQLiteSecurityScopedResource?
     private let profileStore: any ConnectionProfilePersisting
     private let passwordStore: any ConnectionPasswordStoring
+    private let sqliteBookmarkAccess: any SQLiteBookmarkAccessing
+    private let driverProvider: any DatabaseDriverProviding
 
     init(
         profileStore: (any ConnectionProfilePersisting)? = nil,
-        passwordStore: any ConnectionPasswordStoring = KeychainPasswordStore()
+        passwordStore: any ConnectionPasswordStoring = KeychainPasswordStore(),
+        sqliteBookmarkAccess: any SQLiteBookmarkAccessing = SQLiteBookmark(),
+        driverProvider: any DatabaseDriverProviding = DefaultDatabaseDriverProvider()
     ) {
         self.passwordStore = passwordStore
+        self.sqliteBookmarkAccess = sqliteBookmarkAccess
+        self.driverProvider = driverProvider
         if let profileStore {
             self.profileStore = profileStore
         } else {
@@ -131,7 +137,7 @@ final class AppModel {
         sqlText = "SELECT name, type FROM sqlite_master ORDER BY type, name"
 
         let config = ConnectionConfig(name: connectionName, kind: .sqlite, filePath: path)
-        let session = ConnectionSession(driver: SQLiteDriver())
+        let session = ConnectionSession(driver: driver(for: .sqlite))
         do {
             try await session.connect(config: config)
             self.session = session
@@ -143,6 +149,30 @@ final class AppModel {
             errorMessage = error.localizedDescription
         }
         isLoading = false
+    }
+
+    func openSQLite(url: URL) async {
+        do {
+            let existingProfile = connectionProfiles.first { $0.kind == .sqlite && $0.filePath == url.path }
+            let profile = try preparedSQLiteProfile(
+                existingProfile ?? ConnectionProfile(name: "", kind: .sqlite),
+                selectedURL: url
+            )
+            try persistProfile(profile)
+            await openSavedSQLite(profile)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func preparedSQLiteProfile(_ profile: ConnectionProfile, selectedURL: URL) throws -> ConnectionProfile {
+        var updated = profile
+        updated.filePath = selectedURL.path
+        updated.sqliteBookmark = try sqliteBookmarkAccess.make(for: selectedURL)
+        if updated.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            updated.name = selectedURL.deletingPathExtension().lastPathComponent
+        }
+        return updated
     }
 
     func openMySQL() async {
@@ -167,7 +197,7 @@ final class AppModel {
             user: user,
             password: mysqlPassword.isEmpty ? nil : mysqlPassword
         )
-        let session = ConnectionSession(driver: MySQLDriver())
+        let session = ConnectionSession(driver: driver(for: .mysql))
         do {
             try await session.connect(config: config)
             self.session = session
@@ -204,7 +234,7 @@ final class AppModel {
             user: user,
             password: postgresqlPassword.isEmpty ? nil : postgresqlPassword
         )
-        let session = ConnectionSession(driver: PostgreSQLDriver())
+        let session = ConnectionSession(driver: driver(for: .postgresql))
         do {
             try await session.connect(config: config)
             self.session = session
@@ -232,12 +262,6 @@ final class AppModel {
 
     func saveProfile(_ profile: ConnectionProfile, password: String?, replacePassword: Bool) {
         do {
-            var updated = connectionProfiles
-            if let index = updated.firstIndex(where: { $0.id == profile.id }) {
-                updated[index] = profile
-            } else {
-                updated.append(profile)
-            }
             let previousPassword = replacePassword ? try passwordStore.password(for: profile.id) : nil
             if replacePassword {
                 if let password, !password.isEmpty {
@@ -247,14 +271,13 @@ final class AppModel {
                 }
             }
             do {
-                try profileStore.save(updated)
+                try persistProfile(profile)
             } catch {
                 if replacePassword {
                     restorePassword(previousPassword, for: profile.id)
                 }
                 throw error
             }
-            connectionProfiles = updated.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
             infoMessage = "Saved connection \(profile.name)."
         } catch {
             errorMessage = error.localizedDescription
@@ -336,11 +359,15 @@ final class AppModel {
     func testProfile(_ profile: ConnectionProfile) async {
         isLoading = true
         errorMessage = nil
+        var sqliteAccess: SQLiteSecurityScopedResource?
+        defer { sqliteAccess?.endAccess() }
         do {
             let sqlitePath: String?
             let password: String?
             if profile.kind == .sqlite {
-                sqlitePath = try beginSQLiteAccess(for: profile)
+                let access = try acquireSQLiteAccess(for: profile)
+                sqliteAccess = access
+                sqlitePath = access.url.path
                 password = nil
             } else {
                 sqlitePath = nil
@@ -349,32 +376,41 @@ final class AppModel {
             let driver = driver(for: profile.kind)
             try await driver.connect(config: profile.connectionConfig(password: password, sqlitePath: sqlitePath))
             await driver.disconnect()
-            endSQLiteAccess()
             infoMessage = "Connection test succeeded for \(profile.name)."
         } catch {
-            endSQLiteAccess()
             errorMessage = error.localizedDescription
         }
         isLoading = false
     }
 
     private func driver(for kind: DatabaseKind) -> any DatabaseDriver {
-        switch kind {
-        case .sqlite: SQLiteDriver()
-        case .mysql: MySQLDriver()
-        case .postgresql: PostgreSQLDriver()
-        }
+        driverProvider.makeDriver(for: kind)
     }
 
-    private func beginSQLiteAccess(for profile: ConnectionProfile) throws -> String {
+    private func acquireSQLiteAccess(for profile: ConnectionProfile) throws -> SQLiteSecurityScopedResource {
         guard let path = profile.filePath else { throw DatabaseError.missingSQLitePath }
-        guard let bookmark = profile.sqliteBookmark else { return path }
-        let url = try SQLiteBookmark.resolve(bookmark)
-        guard url.startAccessingSecurityScopedResource() else {
-            throw ConnectionProfileStoreError.sqliteAccessDenied(url.path)
+        guard let bookmark = profile.sqliteBookmark else {
+            return SQLiteSecurityScopedResource(url: URL(fileURLWithPath: path), bookmarkAccess: NoopSQLiteBookmarkAccess())
         }
-        activeSecurityScopedURL = url
-        return url.path
+        let resolution = try sqliteBookmarkAccess.resolve(bookmark)
+        guard sqliteBookmarkAccess.startAccessingSecurityScopedResource(at: resolution.url) else {
+            throw ConnectionProfileStoreError.sqliteAccessDenied(resolution.url.path)
+        }
+        let resource = SQLiteSecurityScopedResource(url: resolution.url, bookmarkAccess: sqliteBookmarkAccess)
+        do {
+            let refreshedBookmark = resolution.isStale ? try sqliteBookmarkAccess.make(for: resolution.url) : nil
+            if refreshedBookmark != nil || profile.filePath != resolution.url.path {
+                try refreshSQLiteProfile(
+                    profileID: profile.id,
+                    resolvedURL: resolution.url,
+                    refreshedBookmark: refreshedBookmark
+                )
+            }
+            return resource
+        } catch {
+            resource.endAccess()
+            throw error
+        }
     }
 
     private func openSavedSQLite(_ profile: ConnectionProfile) async {
@@ -382,28 +418,46 @@ final class AppModel {
         errorMessage = nil
         await disconnectCurrentSession()
         resetWorkspace()
+        var resource: SQLiteSecurityScopedResource?
+        var pendingSession: ConnectionSession?
+        var didConnect = false
         do {
-            let path = try beginSQLiteAccess(for: profile)
-            databasePath = path
+            let acquiredResource = try acquireSQLiteAccess(for: profile)
+            resource = acquiredResource
+            let session = ConnectionSession(driver: driver(for: .sqlite))
+            pendingSession = session
+            try await session.connect(config: profile.connectionConfig(sqlitePath: acquiredResource.url.path))
+            didConnect = true
+            let loadedSchemas = try await session.schemas()
+            let loadedSchema = loadedSchemas.first
+            let loadedTables = try await session.tables(in: loadedSchema?.name ?? "main")
+
+            self.session = session
+            activeSecurityScopedResource = acquiredResource
+            resource = nil
+            pendingSession = nil
+            databasePath = acquiredResource.url.path
             connectionName = profile.name
             sqlText = "SELECT name, type FROM sqlite_master ORDER BY type, name"
-            let session = ConnectionSession(driver: SQLiteDriver())
-            try await session.connect(config: profile.connectionConfig(sqlitePath: path))
-            self.session = session
-            schemas = try await session.schemas()
-            selectedSchema = schemas.first
-            tables = try await session.tables(in: selectedSchema?.name ?? "main")
+            schemas = loadedSchemas
+            selectedSchema = loadedSchema
+            tables = loadedTables
             screen = .database
         } catch {
-            endSQLiteAccess()
-            errorMessage = error.localizedDescription
+            if let pendingSession { await pendingSession.disconnect() }
+            resource?.endAccess()
+            if !didConnect, let url = resource?.url, profile.sqliteBookmark != nil {
+                errorMessage = ConnectionProfileStoreError.sqliteAccessDenied(url.path).localizedDescription
+            } else {
+                errorMessage = error.localizedDescription
+            }
         }
         isLoading = false
     }
 
     private func endSQLiteAccess() {
-        activeSecurityScopedURL?.stopAccessingSecurityScopedResource()
-        activeSecurityScopedURL = nil
+        activeSecurityScopedResource?.endAccess()
+        activeSecurityScopedResource = nil
     }
 
     private func disconnectCurrentSession() async {
@@ -669,6 +723,56 @@ final class AppModel {
         filterColumn = ""
         filterOperator = .equals
         filterValue = ""
+    }
+
+    private func persistProfile(_ profile: ConnectionProfile) throws {
+        var updated = connectionProfiles
+        if let index = updated.firstIndex(where: { $0.id == profile.id }) {
+            updated[index] = profile
+        } else {
+            updated.append(profile)
+        }
+        try profileStore.save(updated)
+        connectionProfiles = updated.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    private func refreshSQLiteProfile(
+        profileID: UUID,
+        resolvedURL: URL,
+        refreshedBookmark: Data?
+    ) throws {
+        guard let profile = connectionProfiles.first(where: { $0.id == profileID }) else {
+            throw ConnectionProfileStoreError.savedConnectionNotFound
+        }
+        var updated = profile
+        updated.filePath = resolvedURL.path
+        if let refreshedBookmark {
+            updated.sqliteBookmark = refreshedBookmark
+        }
+        try persistProfile(updated)
+    }
+}
+
+private struct NoopSQLiteBookmarkAccess: SQLiteBookmarkAccessing {
+    func make(for url: URL) throws -> Data { Data() }
+    func resolve(_ bookmark: Data) throws -> SQLiteBookmarkResolution {
+        throw ConnectionProfileStoreError.invalidSQLiteBookmark
+    }
+    func startAccessingSecurityScopedResource(at url: URL) -> Bool { true }
+    func stopAccessingSecurityScopedResource(at url: URL) {}
+}
+
+protocol DatabaseDriverProviding: Sendable {
+    func makeDriver(for kind: DatabaseKind) -> any DatabaseDriver
+}
+
+struct DefaultDatabaseDriverProvider: DatabaseDriverProviding {
+    func makeDriver(for kind: DatabaseKind) -> any DatabaseDriver {
+        switch kind {
+        case .sqlite: SQLiteDriver()
+        case .mysql: MySQLDriver()
+        case .postgresql: PostgreSQLDriver()
+        }
     }
 }
 

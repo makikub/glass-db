@@ -149,11 +149,7 @@ struct ConnectionProfileEditor: View {
         ) { result in
             guard case .success(let urls) = result, let url = urls.first else { return }
             do {
-                profile.filePath = url.path
-                profile.sqliteBookmark = try SQLiteBookmark.make(for: url)
-                if profile.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    profile.name = url.deletingPathExtension().lastPathComponent
-                }
+                profile = try model.preparedSQLiteProfile(profile, selectedURL: url)
             } catch {
                 model.errorMessage = error.localizedDescription
             }
