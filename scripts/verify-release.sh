@@ -15,7 +15,9 @@ build_number="${2:-}"
 repo_root="$(git rev-parse --show-toplevel)"
 release_zip="$repo_root/docs/releases/GlassDB-${version}.zip"
 appcast="$repo_root/docs/releases/appcast.xml"
+landing_page="$repo_root/docs/index.html"
 expected_url="https://makikub.github.io/glass-db/releases/GlassDB-${version}.zip"
+expected_landing_href="href=\"releases/GlassDB-${version}.zip\""
 work_dir="$(mktemp -d "/tmp/gdbrel.XXXXXX")"
 allow_ad_hoc="${GLASSDB_ALLOW_AD_HOC_RELEASE:-0}"
 
@@ -31,6 +33,7 @@ fail() {
 
 [[ -f "$release_zip" ]] || fail "missing $release_zip"
 [[ -f "$appcast" ]] || fail "missing $appcast"
+[[ -f "$landing_page" ]] || fail "missing $landing_page"
 
 if unzip -l "$release_zip" | grep -Eq '(^|/)(__MACOSX|\\._|\\.DS_Store)'; then
   fail "archive contains AppleDouble or Finder metadata files"
@@ -74,5 +77,6 @@ fi
 grep -q "<sparkle:shortVersionString>${version}</sparkle:shortVersionString>" "$appcast" || fail "appcast does not include version $version"
 grep -q "url=\"$expected_url\"" "$appcast" || fail "appcast download URL is not $expected_url"
 grep -q "sparkle:edSignature=" "$appcast" || fail "appcast is missing Sparkle EdDSA signature"
+grep -q "$expected_landing_href" "$landing_page" || fail "landing page download link is not GlassDB-${version}.zip"
 
 echo "Release verification passed for GlassDB $version"

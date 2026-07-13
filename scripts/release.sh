@@ -51,6 +51,18 @@ fi
 # Always regenerate the appcast after the final archive has been written.
 scripts/update-appcast.sh
 
+landing_page="$repo_root/docs/index.html"
+landing_page_tmp="$(mktemp "${landing_page}.XXXXXX")"
+trap 'rm -f "$landing_page_tmp"' EXIT
+if ! grep -Eq 'href="releases/GlassDB-[^"]+\.zip"' "$landing_page"; then
+  echo "Download link was not found in $landing_page" >&2
+  exit 1
+fi
+sed -E "s|href=\"releases/GlassDB-[^\"]+\\.zip\"|href=\"releases/GlassDB-${version}.zip\"|" "$landing_page" > "$landing_page_tmp"
+chmod 0644 "$landing_page_tmp"
+mv "$landing_page_tmp" "$landing_page"
+trap - EXIT
+
 verify_args=("$version")
 if [[ -n "$build_number" ]]; then
   verify_args+=("$build_number")
