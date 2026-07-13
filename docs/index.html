@@ -3,59 +3,195 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>GlassDB</title>
-    <meta name="description" content="GlassDB is a macOS-native database viewer for developers.">
+    <title>GlassDB — A native database workspace for macOS</title>
+    <meta name="description" content="Browse SQLite, MySQL, and PostgreSQL databases in a focused native macOS workspace.">
+    <meta name="theme-color" content="#071b22">
+    <meta property="og:title" content="GlassDB — A native database workspace for macOS">
+    <meta property="og:description" content="Inspect data, run SQL, and make deliberate edits without leaving a focused native workspace.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://makikub.github.io/glass-db/">
+    <link rel="icon" href="assets/app-icon.png">
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
-    <main class="page">
-      <section class="hero">
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="GlassDB home">
+        <img src="assets/app-icon.png" alt="" width="36" height="36">
+        <span>GlassDB</span>
+      </a>
+      <nav aria-label="Main navigation">
+        <a href="#features">Features</a>
+        <a href="#safety">Built for control</a>
+        <a href="https://github.com/makikub/glass-db">GitHub</a>
+      </nav>
+      <a class="header-download" href="releases/GlassDB-0.1.6.zip">Download <span>v0.1.6</span></a>
+    </header>
+
+    <main id="top">
+      <section class="hero shell">
         <div class="hero-copy">
-          <img class="app-icon" src="assets/app-icon.png" alt="" width="96" height="96">
-          <p class="eyebrow">macOS database viewer</p>
-          <h1>GlassDB</h1>
-          <p class="lede">Open SQLite databases, inspect tables, page through rows, and run ad hoc SQL in a quiet native workspace.</p>
-          <div class="actions">
-            <a class="primary" href="releases/GlassDB-0.1.6.zip">Download for macOS</a>
-            <a class="secondary" href="https://github.com/makikub/glass-db">View source</a>
+          <div class="version-pill"><span></span> Version 0.1.6 · Open source</div>
+          <h1>Your databases.<br><em>Clearly in view.</em></h1>
+          <p class="hero-lede">Open SQLite files or connect to MySQL and PostgreSQL. Browse data, run SQL, and make deliberate edits in a focused native macOS workspace.</p>
+          <div class="hero-actions">
+            <a class="button primary" href="releases/GlassDB-0.1.6.zip">
+              <span class="apple-mark" aria-hidden="true">↓</span>
+              Download for macOS
+            </a>
+            <a class="button secondary" href="https://github.com/makikub/glass-db">View source <span aria-hidden="true">↗</span></a>
           </div>
-          <p class="note">Requires macOS 26. Sparkle updates are delivered from the same release feed after install.</p>
+          <p class="requirements">Requires macOS 26 · Signed and notarized · Sparkle updates included</p>
         </div>
-        <div class="app-shot" aria-label="GlassDB interface preview">
-          <div class="toolbar">
-            <span></span><span></span><span></span>
+
+        <div class="product-stage" aria-label="GlassDB interface preview">
+          <div class="stage-glow"></div>
+          <div class="app-window">
+            <div class="window-bar">
+              <div class="traffic-lights" aria-hidden="true"><span></span><span></span><span></span></div>
+              <div class="window-title">GlassDB</div>
+              <div class="toolbar-actions"><span>▦</span><span>›_</span><span>↻</span></div>
+            </div>
+            <div class="app-body">
+              <aside class="db-sidebar">
+                <div class="connection-title"><span class="status-dot"></span> Local Store</div>
+                <div class="db-path">production.sqlite</div>
+                <div class="sidebar-label">TABLES</div>
+                <div class="table-item active"><span>▦</span> customers <small>1,284</small></div>
+                <div class="table-item"><span>▦</span> orders <small>8,921</small></div>
+                <div class="table-item"><span>▦</span> products <small>340</small></div>
+                <div class="sidebar-label secondary-label">VIEWS</div>
+                <div class="table-item"><span>◫</span> active_accounts</div>
+              </aside>
+              <section class="workspace">
+                <div class="workspace-top">
+                  <div>
+                    <strong>customers</strong>
+                    <span>public · table</span>
+                  </div>
+                  <div class="mode-switch"><b>Table</b><span>SQL</span></div>
+                </div>
+                <div class="filter-bar">
+                  <span class="filter">＋ Filter</span>
+                  <span class="sort">↕ Sort</span>
+                  <span class="row-count">1,284 rows</span>
+                </div>
+                <div class="data-grid" role="presentation">
+                  <div class="cell head">id <small>PK</small></div><div class="cell head">company</div><div class="cell head">plan</div><div class="cell head">status</div>
+                  <div class="cell muted">1024</div><div class="cell company">Acme Labs</div><div class="cell">Business</div><div class="cell"><i class="badge live">Active</i></div>
+                  <div class="cell muted">1025</div><div class="cell company">Northwind</div><div class="cell">Starter</div><div class="cell"><i class="badge live">Active</i></div>
+                  <div class="cell muted">1026</div><div class="cell company">Orbit Works</div><div class="cell">Business</div><div class="cell"><i class="badge paused">Paused</i></div>
+                  <div class="cell muted">1027</div><div class="cell company">Juniper Co.</div><div class="cell">Pro</div><div class="cell"><i class="badge live">Active</i></div>
+                  <div class="cell muted">1028</div><div class="cell company">Mori Studio</div><div class="cell">Starter</div><div class="cell"><i class="badge live">Active</i></div>
+                </div>
+                <div class="pager"><span>200 per page</span><span>‹</span><b>1</b><span>2</span><span>3</span><span>›</span></div>
+              </section>
+              <aside class="inspector">
+                <div class="inspector-label">INSPECTOR</div>
+                <div class="field-label">COLUMN</div>
+                <strong>company</strong>
+                <div class="field-label">TYPE</div>
+                <code>TEXT</code>
+                <div class="field-label">VALUE</div>
+                <div class="value-box">Acme Labs</div>
+                <button type="button" tabindex="-1">Copy value</button>
+              </aside>
+            </div>
           </div>
-          <div class="chrome">
-            <aside>
-              <strong>sample.sqlite</strong>
-              <small>Tables</small>
-              <p class="selected">customers</p>
-              <p>orders</p>
-              <p>line_items</p>
-            </aside>
-            <section>
-              <div class="tabs"><b>Data</b><span>SQL</span></div>
-              <div class="grid">
-                <span>id</span><span>name</span><span>status</span>
-                <span>1</span><span>Acme</span><span>active</span>
-                <span>2</span><span>Northwind</span><span>active</span>
-                <span>3</span><span>Example Co.</span><span>paused</span>
-              </div>
-            </section>
+          <div class="float-card sql-card"><span>SQL</span><code>SELECT * FROM customers</code><b>⌘↵</b></div>
+          <div class="float-card safe-card"><span>✓</span><div><b>Changes staged</b><small>Review SQL before apply</small></div></div>
+        </div>
+      </section>
+
+      <section class="database-strip" aria-label="Supported databases">
+        <div class="shell database-strip-inner">
+          <span class="strip-label">One workspace for</span>
+          <div class="database"><i class="db-mark sqlite">S</i><strong>SQLite</strong><small>Files &amp; bookmarks</small></div>
+          <div class="database"><i class="db-mark mysql">M</i><strong>MySQL</strong><small>Server connections</small></div>
+          <div class="database"><i class="db-mark postgres">P</i><strong>PostgreSQL</strong><small>Read-only browsing</small></div>
+        </div>
+      </section>
+
+      <section class="features shell" id="features">
+        <div class="section-heading">
+          <p class="kicker">Everything in its place</p>
+          <h2>From connection to answer,<br>without the clutter.</h2>
+          <p>GlassDB keeps the table grid at the center and the tools you need close by.</p>
+        </div>
+
+        <div class="feature-grid">
+          <article class="feature-card large browse-card">
+            <div class="card-copy">
+              <span class="feature-number">01</span>
+              <h3>Scan data at a glance</h3>
+              <p>Browse schemas, tables, and views. Filter, sort, page, count rows, and copy values from a native grid.</p>
+            </div>
+            <div class="mini-grid" aria-hidden="true">
+              <span class="mini-head">order_id</span><span class="mini-head">customer</span><span class="mini-head">total</span>
+              <span>#8841</span><b>Acme Labs</b><span>$2,480</span>
+              <span>#8842</span><b>Northwind</b><span>$640</span>
+              <span>#8843</span><b>Mori Studio</b><span>$1,120</span>
+            </div>
+          </article>
+
+          <article class="feature-card sql-feature">
+            <span class="feature-number">02</span>
+            <h3>Run the query you need</h3>
+            <p>Use the built-in SQL workspace with automatic SELECT limits, configurable timeouts, cancellation, and reconnect.</p>
+            <div class="code-block" aria-hidden="true"><span>SELECT</span> company, plan<br><span>FROM</span> customers<br><span>WHERE</span> status = <i>'active'</i>;</div>
+          </article>
+
+          <article class="feature-card connections-feature">
+            <span class="feature-number">03</span>
+            <h3>Return to your work</h3>
+            <p>Save, test, duplicate, and reopen connections. Server passwords stay in the macOS Keychain.</p>
+            <div class="connection-list" aria-hidden="true">
+              <div><i class="db-mark sqlite">S</i><span><b>Local Store</b><small>production.sqlite</small></span><em>Connected</em></div>
+              <div><i class="db-mark mysql">M</i><span><b>Development</b><small>MySQL · localhost:3306</small></span></div>
+              <div><i class="db-mark postgres">P</i><span><b>Analytics</b><small>PostgreSQL · read-only</small></span></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="safety shell" id="safety">
+        <div class="safety-panel">
+          <div class="safety-copy">
+            <p class="kicker light">Built for control</p>
+            <h2>Inspect freely.<br>Edit deliberately.</h2>
+            <p>Database tools should make risky actions obvious. GlassDB stages row changes, shows the generated SQL, and only enables editing when a primary key can identify the exact row.</p>
+            <ul>
+              <li><span>✓</span> Primary-key-safe insert, update, and delete</li>
+              <li><span>✓</span> Review generated SQL before applying a batch</li>
+              <li><span>✓</span> PostgreSQL connections enforced as read-only</li>
+            </ul>
+          </div>
+          <div class="change-review" aria-label="Example staged changes panel">
+            <div class="review-header"><span>3 pending changes</span><b>SQL Preview</b></div>
+            <div class="review-code"><span class="keyword">UPDATE</span> "customers"<br><span class="keyword">SET</span> "plan" = <i>'Business'</i><br><span class="keyword">WHERE</span> "id" = <strong>1025</strong>;<br><br><span class="keyword">DELETE FROM</span> "customers"<br><span class="keyword">WHERE</span> "id" = <strong>1026</strong>;</div>
+            <div class="review-actions"><button type="button" tabindex="-1">Discard</button><button class="apply" type="button" tabindex="-1">Apply 3 changes</button></div>
           </div>
         </div>
       </section>
 
-      <section class="details">
-        <div>
-          <h2>Built for quick inspection</h2>
-          <p>GlassDB keeps the table grid at the center, with sidebar navigation, filtering, sorting, paging, value copy, and a compact SQL workspace.</p>
+      <section class="final-cta shell">
+        <img src="assets/app-icon.png" alt="GlassDB app icon" width="96" height="96">
+        <p class="kicker">Database work, with less noise</p>
+        <h2>Keep the data in view.</h2>
+        <p>Download GlassDB and start with a SQLite file, a saved server connection, or the built-in sample database.</p>
+        <div class="hero-actions centered">
+          <a class="button primary" href="releases/GlassDB-0.1.6.zip">Download GlassDB 0.1.6</a>
+          <a class="button secondary" href="https://github.com/makikub/glass-db">Browse the source <span aria-hidden="true">↗</span></a>
         </div>
-        <div>
-          <h2>Release feed</h2>
-          <p>Updates are published through Sparkle at <a href="releases/appcast.xml">releases/appcast.xml</a>.</p>
-        </div>
+        <p class="requirements">Free and open source · Requires macOS 26</p>
       </section>
     </main>
+
+    <footer>
+      <div class="shell footer-inner">
+        <a class="brand footer-brand" href="#top"><img src="assets/app-icon.png" alt="" width="28" height="28"><span>GlassDB</span></a>
+        <p>A native database workspace for macOS.</p>
+        <div><a href="releases/appcast.xml">Release feed</a><a href="https://github.com/makikub/glass-db">GitHub</a></div>
+      </div>
+    </footer>
   </body>
 </html>
